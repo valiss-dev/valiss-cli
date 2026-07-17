@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -82,6 +83,9 @@ func initConfig(cfgFile string) error {
 	}
 
 	viper.SetEnvPrefix("VALISS")
+	// Map hyphenated/dotted config keys to underscore-delimited environment
+	// variables, so store-dir binds to VALISS_STORE_DIR.
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 	viper.AutomaticEnv()
 
 	// A missing config file is not an error: the CLI runs on flags and

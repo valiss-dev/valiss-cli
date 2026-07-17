@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"valiss.dev/cli/valiss/internal/store"
 )
 
 // defaultAuditRetention is the store-global audit retention default: 2160h,
@@ -73,8 +75,11 @@ func newStoreCommand() *cobra.Command {
 	initCmd := &cobra.Command{
 		Use:   "init <operator>",
 		Short: "Initialize an operator store",
-		Args:  pathArgs(depthOperator, depthOperator, 0),
-		RunE:  stub,
+		Long: "Initialize an encrypted store for an operator (ADR 0020). The " +
+			"store is a configured, empty container: the operator identity is " +
+			"created later with 'operator add'.",
+		Args: pathArgs(depthOperator, depthOperator, 0),
+		RunE: runStoreInit,
 	}
 	initCmd.Flags().Duration("audit-retention", defaultAuditRetention,
 		"how long to retain audit-journal entries (0 keeps them forever)")
@@ -84,7 +89,7 @@ func newStoreCommand() *cobra.Command {
 		Short: "Show store facts",
 		Long:  "Show read-only facts about an operator store (path, sizes, counts).",
 		Args:  pathArgs(depthOperator, depthOperator, 0),
-		RunE:  stub,
+		RunE:  runStoreInfo,
 	}
 	addJSONFlag(info)
 
@@ -95,10 +100,127 @@ func newStoreCommand() *cobra.Command {
 			"every tunable parameter and its current value; with a <key> " +
 			"<value> pair, set one. Known keys: " + knownConfigKeys() + ".",
 		Args: storeConfigArgs,
-		RunE: stub,
+		RunE: runStoreConfig,
 	}
 	addJSONFlag(config)
 
 	cmd.AddCommand(initCmd, info, config)
 	return cmd
+}
+
+// runStoreInit initializes an operator store with the requested audit
+// retention, prompting for (and confirming) the storage passphrase when
+// VALISS_STORAGE_KEY is unset.
+func runStoreInit(cmd *cobra.Command, args []string) error {
+	operator := args[0]
+	retention, err := cmd.Flags().GetDuration("audit-retention")
+	if err != nil {
+		return err
+	}
+	st, err := initStore(operator, store.Config{AuditRetention: retention})
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	info, err := st.Info()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Initialized store for %q at %s\n", operator, info.Path)
+	return nil
+}
+
+// runStoreInfo prints read-only store facts, as text or JSON.
+func runStoreInfo(cmd *cobra.Command, args []string) error {
+	st, err := openStore(args[0])
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	info, err := st.Info()
+	if err != nil {
+		return err
+	}
+	jsonOut, err := cmd.Flags().GetBool("json")
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), storeInfoJSON(info))
+	}
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "%-16s %s\n", "operator:", info.Operator)
+	fmt.Fprintf(w, "%-16s %s\n", "path:", info.Path)
+	fmt.Fprintf(w, "%-16s %s\n", "created:", info.CreatedAt.Format(time.RFC3339))
+	fmt.Fprintf(w, "%-16s spec %d / wire %d\n", "format:", info.SpecVersion, info.WireVersion)
+	fmt.Fprintf(w, "%-16s %s\n", "audit-retention:", retentionString(info.AuditRetention))
+	fmt.Fprintf(w, "%-16s %d\n", "entities:", info.Entities)
+	fmt.Fprintf(w, "%-16s %d\n", "tokens:", info.Tokens)
+	fmt.Fprintf(w, "%-16s %d\n", "templates:", info.Templates)
+	fmt.Fprintf(w, "%-16s %d\n", "allowlist:", info.Allowlist)
+	fmt.Fprintf(w, "%-16s %d\n", "audit lines:", info.AuditLines)
+	fmt.Fprintf(w, "%-16s %d\n", "size (bytes):", info.SizeBytes)
+	return nil
+}
+
+// runStoreConfig lists the tunable parameters, or sets one. The argument shape
+// is validated by storeConfigArgs before this runs.
+func runStoreConfig(cmd *cobra.Command, args []string) error {
+	st, err := openStore(args[0])
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	if len(args) == 3 {
+		if err := st.SetConfig(args[1], args[2]); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Set %s = %s\n", args[1], args[2])
+		return nil
+	}
+
+	cfg, err := st.Config()
+	if err != nil {
+		return err
+	}
+	jsonOut, err := cmd.Flags().GetBool("json")
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), map[string]string{
+			"audit-retention": retentionString(cfg.AuditRetention),
+		})
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%-16s %s\n", "audit-retention:", retentionString(cfg.AuditRetention))
+	return nil
+}
+
+// storeInfoJSON is the JSON shape of store info: durations rendered as strings
+// so the output stays human-legible while machine-parseable.
+func storeInfoJSON(info store.Info) map[string]any {
+	return map[string]any{
+		"operator":        info.Operator,
+		"path":            info.Path,
+		"created":         info.CreatedAt.Format(time.RFC3339),
+		"spec_version":    info.SpecVersion,
+		"wire_version":    info.WireVersion,
+		"audit_retention": retentionString(info.AuditRetention),
+		"entities":        info.Entities,
+		"tokens":          info.Tokens,
+		"templates":       info.Templates,
+		"allowlist":       info.Allowlist,
+		"audit_lines":     info.AuditLines,
+		"size_bytes":      info.SizeBytes,
+	}
+}
+
+// retentionString renders a retention window, spelling out the keep-forever
+// case (zero) rather than printing "0s".
+func retentionString(d time.Duration) string {
+	if d <= 0 {
+		return "forever"
+	}
+	return d.String()
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -69,15 +70,15 @@ func TestInspectTokenDecodesClaims(t *testing.T) {
 func TestInspectTokenTamperedSignature(t *testing.T) {
 	tok, _ := mintOperatorToken(t, valiss.WithName("acme"))
 	parts := strings.Split(tok, ".")
-	// Flip the last character of the signature segment to break verification
-	// while keeping the token structurally well-formed.
-	sig := []byte(parts[2])
-	if sig[len(sig)-1] == 'A' {
-		sig[len(sig)-1] = 'B'
-	} else {
-		sig[len(sig)-1] = 'A'
+	// Decode the signature, flip a byte, and re-encode. Flipping a byte
+	// guarantees a changed signature (unlike flipping the last base64url
+	// character, whose low bits may be dropped and leave the bytes unchanged).
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
 	}
-	tampered := parts[0] + "." + parts[1] + "." + string(sig)
+	sig[0] ^= 0xff
+	tampered := parts[0] + "." + parts[1] + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	view, err := inspectToken(tampered)
 	if err != nil {

@@ -12,15 +12,27 @@ revocation. Module: `valiss.dev/cli/valiss`, root package `main`, binary
 `cmd/` nesting: `main` sits at the repository root so
 `go install valiss.dev/cli/valiss@latest` installs a binary named `valiss`.
 
-Pre-release scaffold: the command tree specified by ADR 0021 is wired
-(nouns, verbs, flags, help, argument validation), but every command body is
-a stub returning a shared not-implemented error. Bodies land with the store
-layer (ADR 0020). Follow ADR 0021 for the surface; do not invent commands or
-flags it does not specify.
+Pre-release, under active implementation: the command tree specified by ADR
+0021 is wired (nouns, verbs, flags, help, argument validation). The store
+foundation (ADR 0020) and the `inspect` and `store` verbs are implemented;
+the remaining verb families still return the shared not-implemented error
+and land verb-family by verb-family on top of the store. Follow ADR 0021 for
+the surface; do not invent commands or flags it does not specify.
 
 Command files are one per noun (`command_<noun>.go`); shared helpers
-(`errNotImplemented`, path validators, flag helpers) live in `command.go`.
-Entity lifecycle counters are "generation"/"gen", never "version".
+(`errNotImplemented`, path validators, flag helpers) live in `command.go`,
+and JSON output in `output.go`. The store layer lives in `internal/store`
+(pure store logic, no cobra/viper) and is opened through the helpers in
+`storeaccess.go`. Entity lifecycle counters are "generation"/"gen", never
+"version".
+
+The store is one encrypted SQLite file per operator
+(`~/.valiss/store/<operator>.db`, ADR 0020) on the `gosqlite.org` /
+`liteorm.org` stack, keyed from `VALISS_STORAGE_KEY` (or an interactive
+prompt) through Argon2id. Encryption is mandatory; the `vfs/cksm` checksum
+layer is deferred (it trips `-d=checkptr` under `go test -race`). The schema
+(`internal/store/schema.go`) is generation- and tombstone-aware from the
+first migration.
 
 Plain Go toolchain: no Makefile or lint config.
 

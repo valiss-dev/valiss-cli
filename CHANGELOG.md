@@ -57,6 +57,16 @@ changes may land in minor releases and are flagged **Breaking** below.
   an order-independent content hash); show and audit accept a `<name>@<gen>`
   pin; remove retires the name for new mints. Each generation carries a content
   hash and a random salt (for the ADR 0022 wire name-digest scheme).
+- `token mint | list | show | revoke`: mint a user token (fail-closed on
+  extensions — one of `--template`, an explicit grant flag, or
+  `--no-extension` is required), unioning a template's grants with explicit
+  `--http`/`--grpc`/`--custom` flags and applying its TTL and bearer flag
+  (`--ttl` overrides). The token prints to stdout and metadata to stderr; the
+  jti is deposited in the allowlist by default (`--no-allowlist` opts out).
+  list scopes to an entity subtree; show and revoke address a jti; revoke
+  removes the jti from the allowlist. The mint stamps the template name,
+  generation, and content hash into the issuance record. `--json` on list and
+  show.
 
 ### Notes
 

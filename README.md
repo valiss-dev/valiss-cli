@@ -14,9 +14,11 @@ The installed binary is named `valiss`.
 
 ## Status
 
-Pre-release scaffold. Only the root command and `--version` exist so far;
-the command surface is being specified separately. Not yet usable for
-trust-domain management.
+Pre-release scaffold. The full command tree from ADR 0021 (operator,
+account, user, template, token, creds, allowlist, store, inspect) is wired
+with its flags, help text, and argument validation, but every command body
+is a stub that returns a not-implemented error. Implementations arrive with
+the store layer. Not yet usable for trust-domain management.
 
 ## License
 

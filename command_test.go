@@ -267,6 +267,40 @@ func TestMintPreRunE(t *testing.T) {
 	}
 }
 
+// TestStoreConfig covers the git-style get/set argument shape: list, set,
+// and the rejections (lone key, unknown key, unparseable value, arity).
+func TestStoreConfig(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{"list all parameters", []string{"op"}, false},
+		{"set a valid key/value", []string{"op", "audit-retention", "720h"}, false},
+		{"lone key rejected", []string{"op", "audit-retention"}, true},
+		{"unknown key rejected", []string{"op", "bogus-key", "5"}, true},
+		{"unparseable duration rejected", []string{"op", "audit-retention", "not-a-duration"}, true},
+		{"trailing arg rejected", []string{"op", "audit-retention", "720h", "extra"}, true},
+		{"bad operator path rejected", []string{"op/acct", "audit-retention", "720h"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cmd := findCommand(t, "store", "config")
+			err := cmd.Args(cmd, c.args)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("Args(%v) error = %v, wantErr %v", c.args, err, c.wantErr)
+			}
+			if c.wantErr {
+				return
+			}
+			// A well-formed get or set proceeds to the shared stub.
+			if runErr := cmd.RunE(cmd, c.args); !errors.Is(runErr, errNotImplemented) {
+				t.Errorf("RunE(%v) = %v, want errNotImplemented", c.args, runErr)
+			}
+		})
+	}
+}
+
 // TestStubsReturnNotImplemented spot-checks that leaf bodies are stubs.
 func TestStubsReturnNotImplemented(t *testing.T) {
 	for _, path := range [][]string{

@@ -3,8 +3,10 @@ module valiss.dev/cli/valiss
 go 1.26.4
 
 require (
+	github.com/nats-io/nkeys v0.4.16
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	valiss.dev/valiss v0.13.1
 )
 
 require (
@@ -19,6 +21,7 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 )

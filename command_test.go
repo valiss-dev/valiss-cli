@@ -303,10 +303,12 @@ func TestStoreConfig(t *testing.T) {
 
 // TestStubsReturnNotImplemented spot-checks that leaf bodies are stubs.
 func TestStubsReturnNotImplemented(t *testing.T) {
+	// inspect is implemented (offline decode); the rest remain stubs until
+	// their store-backed bodies land.
 	for _, path := range [][]string{
 		{"operator", "add"}, {"account", "list"}, {"user", "show"},
 		{"template", "add"}, {"token", "revoke"}, {"creds", "export"},
-		{"allowlist", "export"}, {"store", "init"}, {"inspect"},
+		{"allowlist", "export"}, {"store", "init"},
 	} {
 		cmd := findCommand(t, path...)
 		if err := cmd.RunE(cmd, nil); !errors.Is(err, errNotImplemented) {

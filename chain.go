@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nkeys"
@@ -104,6 +105,64 @@ func addOperator(st *store.Local, name string) (store.EntityRecord, error) {
 	return rec, nil
 }
 
+// addAccount creates an account identity under an operator: a fresh account
+// key and an operator-signed account token at the operator's current epoch,
+// carrying its own generation 1. The account token is not deposited in the
+// allowlist here; depositing an account's jti is a deliberate act through the
+// allowlist verb (this keeps account add fail-closed and parallel to operator
+// add). It fails if the operator is absent or the account already exists.
+func addAccount(st *store.Local, opPath, acctName string) (store.EntityRecord, error) {
+	op, err := st.LiveEntity(opPath)
+	if errors.Is(err, store.ErrNoEntity) {
+		return store.EntityRecord{}, errNoOperator
+	} else if err != nil {
+		return store.EntityRecord{}, err
+	}
+	path := opPath + "/" + acctName
+	if exists, err := st.EntityExists(path); err != nil {
+		return store.EntityRecord{}, err
+	} else if exists {
+		return store.EntityRecord{}, fmt.Errorf("valiss: account %q already exists", path)
+	}
+
+	opKP, err := nkeys.FromSeed(op.Seed)
+	if err != nil {
+		return store.EntityRecord{}, fmt.Errorf("valiss: loading operator key: %w", err)
+	}
+	kp, err := nkeys.CreateAccount()
+	if err != nil {
+		return store.EntityRecord{}, fmt.Errorf("valiss: generating account key: %w", err)
+	}
+	pub, seed, err := keyMaterial(kp)
+	if err != nil {
+		return store.EntityRecord{}, err
+	}
+	token, err := valiss.IssueAccount(opKP, pub, valiss.WithName(acctName), valiss.WithEpoch(op.Epoch))
+	if err != nil {
+		return store.EntityRecord{}, fmt.Errorf("valiss: minting account token: %w", err)
+	}
+	rec := store.EntityRecord{
+		Kind:       store.KindAccount,
+		Path:       path,
+		Parent:     opPath,
+		Name:       acctName,
+		PublicKey:  pub,
+		Seed:       seed,
+		Generation: 1,
+		Epoch:      op.Epoch,
+		Token:      token,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if err := st.PutEntity(rec); err != nil {
+		return store.EntityRecord{}, err
+	}
+	if err := st.Append(store.AuditEntry{Op: store.AuditEntityAdd, Path: path,
+		Detail: fmt.Sprintf("account %s gen=1 epoch=%d", pub, op.Epoch)}); err != nil {
+		return store.EntityRecord{}, err
+	}
+	return rec, nil
+}
+
 // rotateOperator performs an epoch rotation: it keeps the operator key (the
 // pinned trust anchor) and advances the epoch/generation, re-minting the
 // self-signed operator token at the new epoch. Verifiers that adopt the new
@@ -199,5 +258,13 @@ func keyMaterial(kp nkeys.KeyPair) (pub string, seed []byte, err error) {
 // operatorPathOf returns the operator path a store is keyed by. A store holds
 // exactly one operator, so this is the store's operator name.
 func operatorPathOf(st *store.Local) string { return st.Operator() }
+
+// operatorOf returns the operator (first) segment of an entity path.
+func operatorOf(path string) string {
+	if i := strings.IndexByte(path, '/'); i >= 0 {
+		return path[:i]
+	}
+	return path
+}
 
 var errNoOperator = errors.New("valiss: store has no operator; run 'valiss operator add <operator>' first")

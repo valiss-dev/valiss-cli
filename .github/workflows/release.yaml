@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  # Gate: no release is cut without a green suite. Reuses the same workflow
+  # that runs on every push and PR (test.yaml, callable via workflow_call).
+  test:
+    uses: ./.github/workflows/test.yaml
+
+  goreleaser:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      # Create the GitHub Release and upload the archives/checksums.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # goreleaser needs the full history and all tags to build the
+          # release from the pushed tag.
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Print the body of the "## [<version>]" section: everything after
+          # its header up to the next "## [" header. CHANGELOG.md is the single
+          # source of truth (see .goreleaser.yaml, RELEASING.md).
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" { found = 1; next }
+            found && /^## \[/        { exit }
+            found                    { print }
+          ' CHANGELOG.md > "${RUNNER_TEMP}/release-notes.md"
+          if [ ! -s "${RUNNER_TEMP}/release-notes.md" ]; then
+            echo "::error::no CHANGELOG.md section found for version ${version}; finalize the [Unreleased] section before tagging (see RELEASING.md)"
+            exit 1
+          fi
+          echo "path=${RUNNER_TEMP}/release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean --release-notes=${{ steps.notes.outputs.path }}
+        env:
+          # Creates the GitHub Release and uploads assets on this repo.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Cross-repo push to valiss-dev/homebrew-tap (ADR 0024). The default
+          # GITHUB_TOKEN cannot reach another repo, so a dedicated token is
+          # required. Referenced unconditionally so the goreleaser template
+          # resolves; when the secret is absent it is the empty string and the
+          # brews step self-skips (see .goreleaser.yaml). Provision this secret
+          # before the first tap-publishing release (see RELEASING.md).
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

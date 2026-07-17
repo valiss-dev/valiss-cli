@@ -1,0 +1,85 @@
+# goreleaser configuration for the valiss CLI.
+#
+# Release notes are NOT generated from git history: CHANGELOG.md is the single
+# source of truth (Keep a Changelog, same as valiss-go). The tag's section is
+# extracted in .github/workflows/release.yaml and passed to goreleaser via
+# --release-notes, so the GitHub Release body matches the changelog verbatim.
+# See RELEASING.md.
+version: 2
+
+project_name: valiss
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: valiss
+    main: .
+    binary: valiss
+    # Pure Go per ADR 0020: no cgo, plain cross-compilation to every target.
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      # Stamp the release version into the package-level `version` variable
+      # that main.go declares (defaulting to "0.0.0-dev").
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: valiss
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+
+# git-based changelog is disabled; CHANGELOG.md drives the release notes.
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: valiss-dev
+    name: valiss-cli
+
+# Homebrew tap publishing per ADR 0024: the formula installs the prebuilt
+# GitHub Release binary and is pushed to valiss-dev/homebrew-tap.
+#
+# The push is a CROSS-REPO write: the default GITHUB_TOKEN cannot reach
+# homebrew-tap, so a dedicated token is read from HOMEBREW_TAP_TOKEN. Until
+# that secret is provisioned (see RELEASING.md), skip_upload evaluates to
+# "true" and the formula step is skipped, so a release still publishes its
+# binaries and GitHub Release without failing on a missing token.
+brews:
+  - name: valiss
+    skip_upload: '{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}'
+    repository:
+      owner: valiss-dev
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://valiss.dev"
+    description: "Command-line tool for operating a valiss trust domain"
+    license: "MIT"
+    commit_author:
+      name: valiss-dev-bot
+      email: 42915+mikluko@users.noreply.github.com
+    install: |
+      bin.install "valiss"
+    test: |
+      system "#{bin}/valiss", "--version"

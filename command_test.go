@@ -256,13 +256,9 @@ func TestMintPreRunE(t *testing.T) {
 			if (err != nil) != c.wantErr {
 				t.Fatalf("PreRunE error = %v, wantErr %v", err, c.wantErr)
 			}
-			if c.wantErr {
-				return
-			}
-			// A qualified mint proceeds to the shared stub.
-			if runErr := mint.RunE(mint, []string{"op/acct/user"}); !errors.Is(runErr, errNotImplemented) {
-				t.Errorf("RunE = %v, want errNotImplemented", runErr)
-			}
+			// This test covers the fail-closed PreRunE rule; the qualified
+			// mint's end-to-end behavior (store, minting) is exercised by the
+			// token command tests.
 		})
 	}
 }
@@ -300,10 +296,10 @@ func TestStoreConfig(t *testing.T) {
 
 // TestStubsReturnNotImplemented spot-checks that leaf bodies are stubs.
 func TestStubsReturnNotImplemented(t *testing.T) {
-	// inspect, store, operator, account, user, and template verbs are
+	// inspect, store, operator, account, user, template, and token verbs are
 	// implemented; the rest remain stubs until their store-backed bodies land.
 	for _, path := range [][]string{
-		{"token", "revoke"}, {"creds", "export"},
+		{"creds", "export"},
 		{"allowlist", "export"},
 	} {
 		cmd := findCommand(t, path...)

@@ -48,6 +48,15 @@ func childName(path string) string {
 	return path
 }
 
+// parentOf returns an entity path with its last segment removed (the parent
+// path); it returns "" for a single-segment path.
+func parentOf(path string) string {
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		return path[:i]
+	}
+	return ""
+}
+
 // writeEntityList renders a list of entities as text or JSON.
 func writeEntityList(cmd *cobra.Command, recs []store.EntityRecord) error {
 	summaries := make([]entitySummary, 0, len(recs))

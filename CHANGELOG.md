@@ -46,6 +46,10 @@ changes may land in minor releases and are flagged **Breaking** below.
   (cascade with a shown blast radius), and read the subtree audit journal.
   `--json` on the read verbs. Depositing an account's jti in the allowlist is
   left to the allowlist command, keeping account add fail-closed.
+- `user add | list | show | remove | audit`: add a user under an account (a
+  fresh user key and an account-signed user token at the domain's current
+  epoch), list an account's users, show one, remove, and read the audit
+  journal. `--json` on the read verbs.
 
 ### Notes
 

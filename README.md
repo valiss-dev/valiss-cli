@@ -14,19 +14,23 @@ The installed binary is named `valiss`.
 
 ## Status
 
-Pre-release, under active implementation. The full command tree from ADR
-0021 (operator, account, user, template, token, creds, allowlist, store,
-inspect) is wired with its flags, help text, and argument validation. The
-store foundation (ADR 0020) is in place — one encrypted SQLite file per
-operator — and the following are implemented:
+Pre-release. The full command tree from ADR 0021 is implemented over the
+encrypted per-operator store of ADR 0020:
 
-- `inspect <token>` — offline token decode.
-- `store init | info | config` — create, inspect, and tune an operator store.
+- `operator | account | user` — `add | list | show | remove | audit`
+  (operator also `rotate`): the signing chain of nkey identities.
+- `template` — `add | list | show | remove | audit`: per-operator,
+  generation-stamped claimsets (extension grants, TTL, bearer, description).
+- `token` — `mint | list | show | revoke`: issue user tokens (fail-closed on
+  extensions), list, show, and revoke issuances.
+- `creds export` — account, user, bundle, and bearer credential files.
+- `allowlist` — `list | add | remove | export`: the local jti allowlist, with
+  `export` producing exactly what servers consume.
+- `store` — `init | info | config`; `inspect` — offline token decode.
 
-The remaining entity, token, template, creds, and allowlist verbs are wired
-but still return a not-implemented error; their bodies land verb-family by
-verb-family on top of this foundation. Not yet usable end to end for
-trust-domain management.
+The store is one encrypted SQLite file per operator under `~/.valiss/store/`,
+keyed from `VALISS_STORAGE_KEY` (or an interactive prompt). Being pre-1.0, the
+command surface may still change.
 
 ## License
 

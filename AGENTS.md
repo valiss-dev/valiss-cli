@@ -12,9 +12,15 @@ revocation. Module: `valiss.dev/cli/valiss`, root package `main`, binary
 `cmd/` nesting: `main` sits at the repository root so
 `go install valiss.dev/cli/valiss@latest` installs a binary named `valiss`.
 
-Pre-release scaffold: only the root command and `--version` exist. The
-command surface is specified separately (ADR 0021); do not invent
-subcommands.
+Pre-release scaffold: the command tree specified by ADR 0021 is wired
+(nouns, verbs, flags, help, argument validation), but every command body is
+a stub returning a shared not-implemented error. Bodies land with the store
+layer (ADR 0020). Follow ADR 0021 for the surface; do not invent commands or
+flags it does not specify.
+
+Command files are one per noun (`command_<noun>.go`); shared helpers
+(`errNotImplemented`, path validators, flag helpers) live in `command.go`.
+Entity lifecycle counters are "generation"/"gen", never "version".
 
 Plain Go toolchain: no Makefile or lint config.
 

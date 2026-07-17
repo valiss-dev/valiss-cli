@@ -2,9 +2,10 @@
 // domain: minting operator, account, and user tokens, managing keys and
 // creds files, and revocation.
 //
-// This is a pre-release scaffold. The command surface is specified
-// separately (ADR 0021); only the root command and version wiring exist
-// so far, on cobra and viper per ADR 0019.
+// This is a pre-release scaffold. The command tree specified by ADR 0021 is
+// wired on cobra and viper (ADR 0019), but every command body is a stub
+// returning a not-implemented error; the bodies land with the store layer
+// (ADR 0020).
 package main
 
 import (
@@ -28,8 +29,9 @@ func main() {
 	}
 }
 
-// newRootCommand builds the valiss root command. Business subcommands are
-// added as the command surface is specified; none exist yet.
+// newRootCommand builds the valiss root command and its noun-verb tree.
+// The tree is specified by ADR 0021; entities are addressed by explicit
+// paths with no hidden current-context.
 func newRootCommand() *cobra.Command {
 	var cfgFile string
 
@@ -47,6 +49,18 @@ func newRootCommand() *cobra.Command {
 
 	cmd.PersistentFlags().StringVar(&cfgFile, "config", "",
 		"config file (default is $HOME/.valiss/config.yaml)")
+
+	cmd.AddCommand(
+		newOperatorCommand(),
+		newAccountCommand(),
+		newUserCommand(),
+		newTemplateCommand(),
+		newTokenCommand(),
+		newCredsCommand(),
+		newAllowlistCommand(),
+		newStoreCommand(),
+		newInspectCommand(),
+	)
 
 	return cmd
 }

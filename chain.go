@@ -163,6 +163,68 @@ func addAccount(st *store.Local, opPath, acctName string) (store.EntityRecord, e
 	return rec, nil
 }
 
+// addUser creates a user identity under an account: a fresh user key and an
+// account-signed user token, carrying its own generation 1. The token is
+// stamped with the operator's current epoch, not the account row's epoch, so a
+// freshly added user is at the domain's current epoch. (Re-minting accounts
+// and users after an operator rotation — the rotation ceremony — is not yet
+// automated; a stale account token at an older epoch is a ceremony concern.)
+func addUser(st *store.Local, acctPath, userName string) (store.EntityRecord, error) {
+	acct, err := st.LiveEntity(acctPath)
+	if errors.Is(err, store.ErrNoEntity) {
+		return store.EntityRecord{}, fmt.Errorf("valiss: account %q not found", acctPath)
+	} else if err != nil {
+		return store.EntityRecord{}, err
+	}
+	op, err := st.LiveEntity(operatorOf(acctPath))
+	if err != nil {
+		return store.EntityRecord{}, err
+	}
+	path := acctPath + "/" + userName
+	if exists, err := st.EntityExists(path); err != nil {
+		return store.EntityRecord{}, err
+	} else if exists {
+		return store.EntityRecord{}, fmt.Errorf("valiss: user %q already exists", path)
+	}
+
+	acctKP, err := nkeys.FromSeed(acct.Seed)
+	if err != nil {
+		return store.EntityRecord{}, fmt.Errorf("valiss: loading account key: %w", err)
+	}
+	kp, err := nkeys.CreateUser()
+	if err != nil {
+		return store.EntityRecord{}, fmt.Errorf("valiss: generating user key: %w", err)
+	}
+	pub, seed, err := keyMaterial(kp)
+	if err != nil {
+		return store.EntityRecord{}, err
+	}
+	token, err := valiss.IssueUser(acctKP, pub, valiss.WithName(userName), valiss.WithEpoch(op.Epoch))
+	if err != nil {
+		return store.EntityRecord{}, fmt.Errorf("valiss: minting user token: %w", err)
+	}
+	rec := store.EntityRecord{
+		Kind:       store.KindUser,
+		Path:       path,
+		Parent:     acctPath,
+		Name:       userName,
+		PublicKey:  pub,
+		Seed:       seed,
+		Generation: 1,
+		Epoch:      op.Epoch,
+		Token:      token,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if err := st.PutEntity(rec); err != nil {
+		return store.EntityRecord{}, err
+	}
+	if err := st.Append(store.AuditEntry{Op: store.AuditEntityAdd, Path: path,
+		Detail: fmt.Sprintf("user %s gen=1 epoch=%d", pub, op.Epoch)}); err != nil {
+		return store.EntityRecord{}, err
+	}
+	return rec, nil
+}
+
 // rotateOperator performs an epoch rotation: it keeps the operator key (the
 // pinned trust anchor) and advances the epoch/generation, re-minting the
 // self-signed operator token at the new epoch. Verifiers that adopt the new

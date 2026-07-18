@@ -34,6 +34,12 @@ changes may land in minor releases and are flagged **Breaking** below.
 - `store init | info | config`: create an operator store with a configurable
   audit-retention window, report its facts, and read or set its tunable
   configuration. `--json` on `info` and `config`.
+- `operator add | list | show | rotate | remove | audit`: create an operator
+  identity (a fresh signing key and self-signed operator token, generation and
+  epoch 1; the store is auto-initialized if absent), list the operators with a
+  store, show one, rotate (advance the epoch and re-mint the operator token,
+  keeping the key), remove (cascade with a shown blast radius; `--yes` skips
+  the prompt), and read the subtree audit journal. `--json` on the read verbs.
 
 ### Notes
 

@@ -300,10 +300,10 @@ func TestStoreConfig(t *testing.T) {
 
 // TestStubsReturnNotImplemented spot-checks that leaf bodies are stubs.
 func TestStubsReturnNotImplemented(t *testing.T) {
-	// inspect and the store verbs are implemented; the rest remain stubs until
-	// their store-backed bodies land.
+	// inspect, the store verbs, and the operator verbs are implemented; the
+	// rest remain stubs until their store-backed bodies land.
 	for _, path := range [][]string{
-		{"operator", "add"}, {"account", "list"}, {"user", "show"},
+		{"account", "list"}, {"user", "show"},
 		{"template", "add"}, {"token", "revoke"}, {"creds", "export"},
 		{"allowlist", "export"},
 	} {

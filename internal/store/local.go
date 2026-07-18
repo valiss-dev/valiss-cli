@@ -310,6 +310,9 @@ func (l *Local) Close() error {
 	return nil
 }
 
+// Operator returns the operator name the store is keyed by.
+func (l *Local) Operator() string { return l.operator }
+
 // meta reads the singleton metadata row.
 func (l *Local) meta() (metaRow, error) {
 	m, err := orm.NewRepo[metaRow](l.db).First(context.Background())

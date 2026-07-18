@@ -106,8 +106,12 @@ func TestFlagPresence(t *testing.T) {
 		// account add deposits the account jti in the allowlist by default.
 		{[]string{"account", "add"}, []string{"no-allowlist"}},
 
-		// Claimset flags on template add.
-		{[]string{"template", "add"}, []string{"http", "grpc", "custom", "ttl", "bearer", "description"}},
+		// Claimset flags on template add, aligned with token mint (--ext, not
+		// --custom).
+		{[]string{"template", "add"}, []string{"http", "grpc", "ext", "ttl", "bearer", "description"}},
+
+		// token mint carries --json for scripting.
+		{[]string{"token", "mint"}, []string{"json"}},
 
 		// Creds kinds.
 		{[]string{"creds", "export"}, []string{"bundle", "bearer"}},

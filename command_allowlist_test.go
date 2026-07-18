@@ -36,8 +36,9 @@ func TestAllowlistLifecycle(t *testing.T) {
 	if out, err := runCLI(t, "allowlist", "remove", "acme", "JTI-EXTERNAL", "--yes"); err != nil || !strings.Contains(out, "Removed") {
 		t.Errorf("allowlist remove = %q (err %v)", out, err)
 	}
-	if _, err := runCLI(t, "allowlist", "remove", "acme", "JTI-EXTERNAL", "--yes"); err == nil {
-		t.Error("removing an absent jti succeeded; want error")
+	// Removing an absent jti is idempotent success (mirrors add), not an error.
+	if out, err := runCLI(t, "allowlist", "remove", "acme", "JTI-EXTERNAL", "--yes"); err != nil || !strings.Contains(out, "not in allowlist") {
+		t.Errorf("idempotent remove of absent jti = %q (err %v), want no-op success", out, err)
 	}
 }
 

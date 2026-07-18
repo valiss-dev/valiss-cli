@@ -35,15 +35,21 @@ func newAllowlistCommand() *cobra.Command {
 	add := &cobra.Command{
 		Use:   "add <operator> <jti>",
 		Short: "Add a jti to the allowlist",
-		Args:  pathArgs(depthOperator, depthOperator, 1),
-		RunE:  runAllowlistAdd,
+		Long: "Add an account jti to the operator's allowlist, admitting it (and " +
+			"every user beneath its account) at any server that loads the exported " +
+			"allowlist. Adding a jti already present is a no-op.",
+		Args: pathArgs(depthOperator, depthOperator, 1),
+		RunE: runAllowlistAdd,
 	}
 
 	remove := &cobra.Command{
 		Use:   "remove <operator> <jti>",
 		Short: "Remove a jti from the allowlist",
-		Args:  pathArgs(depthOperator, depthOperator, 1),
-		RunE:  runAllowlistRemove,
+		Long: "Remove an account jti from the operator's allowlist, cutting it (and " +
+			"every user beneath its account) at any server that loads the exported " +
+			"allowlist. Removing a jti already absent is a no-op.",
+		Args: pathArgs(depthOperator, depthOperator, 1),
+		RunE: runAllowlistRemove,
 	}
 	addYesFlag(remove)
 
@@ -56,6 +62,7 @@ func newAllowlistCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(list, add, remove, export)
+	requireSubcommand(cmd)
 	return cmd
 }
 
@@ -175,7 +182,7 @@ func runAllowlistExport(cmd *cobra.Command, args []string) error {
 	}
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "# valiss allowlist for operator %s\n", operator)
-	fmt.Fprintf(w, "# generated %s (%d jtis)\n", time.Now().UTC().Format(time.RFC3339), len(entries))
+	fmt.Fprintf(w, "# generated %s (%d jti%s)\n", time.Now().UTC().Format(time.RFC3339), len(entries), plural(len(entries), "", "s"))
 	for _, e := range entries {
 		fmt.Fprintln(w, e.JTI)
 	}

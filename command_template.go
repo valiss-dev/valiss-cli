@@ -51,6 +51,7 @@ func newTemplateCommand() *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list <operator>",
 		Short: "List templates under an operator",
+		Long:  "List the operator's templates: each name's latest generation, its TTL, and its bearer flag, marking any retired for new mints.",
 		Args:  pathArgs(depthOperator, depthOperator, 0),
 		RunE:  runTemplateList,
 	}
@@ -89,6 +90,7 @@ func newTemplateCommand() *cobra.Command {
 	addJSONFlag(audit)
 
 	cmd.AddCommand(add, list, show, remove, audit)
+	requireSubcommand(cmd)
 	return cmd
 }
 

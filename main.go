@@ -60,11 +60,12 @@ Addressing is explicit and path-shaped, with no hidden current-context:
 
 Getting started:
 
-  valiss store init acme            # create the encrypted store (optional; sets retention)
-  valiss operator add acme          # generate the operator identity (auto-creates the store)
-  valiss account add acme/team      # an account, its jti deposited in the allowlist
-  valiss user add acme/team/alice   # a user under the account
-  valiss token mint acme/team/alice --template web
+  valiss store init acme                              # create the encrypted store (optional; sets retention)
+  valiss operator add acme                            # generate the operator identity (auto-creates the store)
+  valiss account add acme/team                        # an account, its jti deposited in the allowlist
+  valiss user add acme/team/alice                     # a user under the account
+  valiss template add acme/web --http api.example.com # a reusable grant template
+  valiss token mint acme/team/alice --template web    # stamp the template into a token
 
 Each store is an encrypted per-operator SQLite file (default ~/.valiss/store).
 The storage passphrase comes from the VALISS_STORAGE_KEY environment variable,

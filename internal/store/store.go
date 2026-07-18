@@ -44,6 +44,8 @@ var (
 	ErrNotFound = errors.New("valiss: store not found")
 	// ErrNoEntity is returned when an addressed entity is absent.
 	ErrNoEntity = errors.New("valiss: entity not found")
+	// ErrNoTemplate is returned when an addressed template is absent.
+	ErrNoTemplate = errors.New("valiss: template not found")
 )
 
 // Config holds the tunable, store-global parameters (ADR 0021). Today the only

@@ -2,10 +2,11 @@
 // domain: minting operator, account, and user tokens, managing keys and
 // creds files, and revocation.
 //
-// This is a pre-release scaffold. The command tree specified by ADR 0021 is
-// wired on cobra and viper (ADR 0019), but every command body is a stub
-// returning a not-implemented error; the bodies land with the store layer
-// (ADR 0020).
+// The command tree specified by ADR 0021 is wired on cobra and viper (ADR
+// 0019) over the encrypted per-operator store of ADR 0020. Entities
+// (operator, account, user, template) take add/list/show/remove/audit;
+// tokens take mint/list/show/revoke; creds, allowlist, store, and inspect
+// round out the surface.
 package main
 
 import (

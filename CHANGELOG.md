@@ -71,6 +71,17 @@ changes may land in minor releases and are flagged **Breaking** below.
   deposit or remove one (remove revokes; `--yes` skips the prompt), and export
   the newline-delimited file servers consume via `valiss.LoadAllowlistFile`
   (a `#` comment header plus one jti per line). `--json` on list.
+- `creds export <path>`: export credential artifacts to stdout, covering the
+  creds kinds the format supports — account-level (account token + account
+  seed), user-level (user token + user seed), a bundle (`--bundle` adds the
+  account token), and bearer (`--bearer`, tokens only, no seed). The creds
+  format has no operator-level form, so an operator path is rejected with a
+  clear message; a `--bearer` export of a non-bearer token warns on stderr.
+
+### Changed
+
+- Every ADR 0021 command body is now implemented; the shared not-implemented
+  stub is removed.
 
 ### Notes
 

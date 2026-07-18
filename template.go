@@ -158,6 +158,26 @@ func parseTemplateRef(arg string) (templateRef, error) {
 	return ref, nil
 }
 
+// parseBareTemplateRef parses a token mint "--template <name>[@<gen>]" value.
+// Unlike parseTemplateRef it carries no operator segment: the operator comes
+// from the minted entity's path. A trailing "@<gen>" pins a generation exactly.
+func parseBareTemplateRef(s string) (templateRef, error) {
+	name, genStr, pinned := strings.Cut(s, "@")
+	if name == "" {
+		return templateRef{}, fmt.Errorf("valiss: template name must not be empty in %q", s)
+	}
+	ref := templateRef{name: name}
+	if pinned {
+		gen, err := strconv.ParseUint(genStr, 10, 64)
+		if err != nil || gen == 0 {
+			return templateRef{}, fmt.Errorf("valiss: template generation pin must be a positive integer, got %q", genStr)
+		}
+		ref.generation = gen
+		ref.pinned = true
+	}
+	return ref, nil
+}
+
 // resolveTemplate loads the referenced template generation: the pinned one, or
 // the latest.
 func resolveTemplate(st *store.Local, ref templateRef) (store.TemplateRecord, error) {

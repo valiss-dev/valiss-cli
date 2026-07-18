@@ -8,16 +8,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// errNotImplemented is returned by every command body. The command tree,
-// its flags, and its argument validation are wired here; the bodies land
-// with the store, crypto, and token layers (ADR 0020, ADR 0021).
-var errNotImplemented = errors.New("valiss: not implemented (command tree is a stub; implementations arrive with the store layer)")
-
-// stub is the RunE shared by every leaf command until its body exists.
-func stub(cmd *cobra.Command, args []string) error {
-	return errNotImplemented
-}
-
 // Entity path depths. Entities are addressed by their position in the
 // signing chain, spelled out on the command line with no hidden context
 // (ADR 0021): an operator is one segment, an account two, a user three.

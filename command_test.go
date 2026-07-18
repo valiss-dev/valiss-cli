@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -101,7 +100,7 @@ func TestFlagPresence(t *testing.T) {
 		{[]string{"allowlist", "remove"}, []string{"yes"}},
 
 		// Grant and issuance flags on mint.
-		{[]string{"token", "mint"}, []string{"template", "http", "grpc", "custom", "ttl", "no-extension", "no-allowlist"}},
+		{[]string{"token", "mint"}, []string{"template", "http", "grpc", "ext", "ttl", "bearer", "no-extension", "no-allowlist"}},
 
 		// Claimset flags on template add.
 		{[]string{"template", "add"}, []string{"http", "grpc", "custom", "ttl", "bearer", "description"}},
@@ -236,8 +235,8 @@ func TestMintPreRunE(t *testing.T) {
 		{"template", map[string]string{"template": "web"}, false},
 		{"template pinned", map[string]string{"template": "web@2"}, false},
 		{"http grant", map[string]string{"http": "example.com"}, false},
-		{"grpc grant", map[string]string{"grpc": "svc.example.com"}, false},
-		{"custom grant", map[string]string{"custom": "app.example.com"}, false},
+		{"grpc grant", map[string]string{"grpc": "/svc.v1.Widgets/*"}, false},
+		{"ext grant", map[string]string{"ext": `quota={"rps":100}`}, false},
 		{"no-extension", map[string]string{"no-extension": "true"}, false},
 		{"template and grant union", map[string]string{"template": "web", "http": "example.com"}, false},
 		{"no-extension with grant", map[string]string{"no-extension": "true", "http": "example.com"}, true},
@@ -255,13 +254,6 @@ func TestMintPreRunE(t *testing.T) {
 			err := mint.PreRunE(mint, []string{"op/acct/user"})
 			if (err != nil) != c.wantErr {
 				t.Fatalf("PreRunE error = %v, wantErr %v", err, c.wantErr)
-			}
-			if c.wantErr {
-				return
-			}
-			// A qualified mint proceeds to the shared stub.
-			if runErr := mint.RunE(mint, []string{"op/acct/user"}); !errors.Is(runErr, errNotImplemented) {
-				t.Errorf("RunE = %v, want errNotImplemented", runErr)
 			}
 		})
 	}
@@ -295,20 +287,5 @@ func TestStoreConfig(t *testing.T) {
 			// test covers. End-to-end config behavior is exercised by the
 			// store package's own tests.
 		})
-	}
-}
-
-// TestStubsReturnNotImplemented spot-checks that leaf bodies are stubs.
-func TestStubsReturnNotImplemented(t *testing.T) {
-	// inspect, store, operator, account, user, and template verbs are
-	// implemented; the rest remain stubs until their store-backed bodies land.
-	for _, path := range [][]string{
-		{"token", "revoke"}, {"creds", "export"},
-		{"allowlist", "export"},
-	} {
-		cmd := findCommand(t, path...)
-		if err := cmd.RunE(cmd, nil); !errors.Is(err, errNotImplemented) {
-			t.Errorf("%v RunE = %v, want errNotImplemented", path, err)
-		}
 	}
 }

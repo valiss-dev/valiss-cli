@@ -225,6 +225,140 @@ func addUser(st *store.Local, acctPath, userName string) (store.EntityRecord, er
 	return rec, nil
 }
 
+// mintParams carries the resolved token mint inputs from the command's flags.
+// The grant slices are the raw flag values; mintToken parses them into
+// extension claims and unions them with a stamped template's grants.
+type mintParams struct {
+	template    string
+	http        []string
+	grpc        []string
+	ext         []string
+	ttl         time.Duration
+	ttlSet      bool
+	bearer      bool
+	noExtension bool
+}
+
+// mintToken mints a fresh account-signed user token for the addressed user and
+// records the issuance (ADR 0021). It resolves an optional template as a
+// mint-time stamp (its name, generation, and content hash are recorded so the
+// audit reads correctly after the template evolves), unions the template's
+// grants with the explicit grant flags, reconciles TTL and the bearer flag,
+// mints with the valiss library, and persists the issuance record. The jti is
+// registered in the allowlist by the caller (unless opted out).
+func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, error) {
+	user, err := st.LiveEntity(path)
+	if errors.Is(err, store.ErrNoEntity) {
+		return store.TokenRecord{}, fmt.Errorf("valiss: user %q not found", path)
+	} else if err != nil {
+		return store.TokenRecord{}, err
+	}
+	acct, err := st.LiveEntity(parentOf(path))
+	if errors.Is(err, store.ErrNoEntity) {
+		return store.TokenRecord{}, fmt.Errorf("valiss: account %q not found", parentOf(path))
+	} else if err != nil {
+		return store.TokenRecord{}, err
+	}
+	op, err := st.LiveEntity(operatorOf(path))
+	if err != nil {
+		return store.TokenRecord{}, err
+	}
+
+	grants := newGrantBuilder()
+	var (
+		tmplName string
+		tmplGen  uint64
+		tmplHash string
+		bearer   = p.bearer
+		ttl      = p.ttl
+		ttlSet   = p.ttlSet
+	)
+	if p.template != "" {
+		ref, err := parseBareTemplateRef(p.template)
+		if err != nil {
+			return store.TokenRecord{}, err
+		}
+		trec, err := resolveTemplate(st, ref)
+		if err != nil {
+			return store.TokenRecord{}, err
+		}
+		if trec.Retired {
+			return store.TokenRecord{}, fmt.Errorf("valiss: template %q is retired and takes no new mints", ref.name)
+		}
+		if err := grants.addTemplateGrants(parseList(trec.HTTP), parseList(trec.GRPC), parseList(trec.Custom)); err != nil {
+			return store.TokenRecord{}, err
+		}
+		if trec.Bearer {
+			bearer = true
+		}
+		if !ttlSet && trec.TTLSeconds > 0 {
+			ttl = time.Duration(trec.TTLSeconds) * time.Second
+			ttlSet = true
+		}
+		tmplName, tmplGen, tmplHash = trec.Name, trec.Generation, trec.ContentHash
+	}
+	// Explicit grant flags union with the template's grants.
+	for _, v := range p.http {
+		if err := grants.addHTTPFlag(v); err != nil {
+			return store.TokenRecord{}, err
+		}
+	}
+	for _, v := range p.grpc {
+		if err := grants.addGRPCFlag(v); err != nil {
+			return store.TokenRecord{}, err
+		}
+	}
+	for _, v := range p.ext {
+		if err := grants.addExtFlag(v); err != nil {
+			return store.TokenRecord{}, err
+		}
+	}
+
+	opts := []valiss.IssueOption{valiss.WithName(user.Name), valiss.WithEpoch(op.Epoch)}
+	if bearer {
+		opts = append(opts, valiss.WithBearer())
+	}
+	if ttlSet && ttl > 0 {
+		opts = append(opts, valiss.WithTTL(ttl))
+	}
+	opts = append(opts, grants.build()...)
+
+	acctKP, err := nkeys.FromSeed(acct.Seed)
+	if err != nil {
+		return store.TokenRecord{}, fmt.Errorf("valiss: loading account key: %w", err)
+	}
+	token, err := valiss.IssueUser(acctKP, user.PublicKey, opts...)
+	if err != nil {
+		return store.TokenRecord{}, fmt.Errorf("valiss: minting user token: %w", err)
+	}
+	claims, err := valiss.Decode(token)
+	if err != nil {
+		return store.TokenRecord{}, fmt.Errorf("valiss: decoding minted token: %w", err)
+	}
+	rec := store.TokenRecord{
+		JTI:          claims.ID,
+		Subject:      path,
+		Level:        store.KindUser,
+		Token:        token,
+		TemplateName: tmplName,
+		TemplateGen:  tmplGen,
+		TemplateHash: tmplHash,
+		MintedAt:     claims.IssuedAt,
+		ExpiresAt:    claims.ExpiresAt,
+	}
+	if err := st.PutToken(rec); err != nil {
+		return store.TokenRecord{}, err
+	}
+	detail := fmt.Sprintf("user token jti=%s epoch=%d", rec.JTI, op.Epoch)
+	if tmplName != "" {
+		detail += fmt.Sprintf(" template=%s@%d", tmplName, tmplGen)
+	}
+	if err := st.Append(store.AuditEntry{Op: store.AuditTokenMint, Path: path, Detail: detail}); err != nil {
+		return store.TokenRecord{}, err
+	}
+	return rec, nil
+}
+
 // rotateOperator performs an epoch rotation: it keeps the operator key (the
 // pinned trust anchor) and advances the epoch/generation, re-minting the
 // self-signed operator token at the new epoch. Verifiers that adopt the new

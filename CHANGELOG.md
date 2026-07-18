@@ -67,6 +67,10 @@ changes may land in minor releases and are flagged **Breaking** below.
   removes the jti from the allowlist. The mint stamps the template name,
   generation, and content hash into the issuance record. `--json` on list and
   show.
+- `allowlist list | add | remove | export`: list the operator's deposited jtis,
+  deposit or remove one (remove revokes; `--yes` skips the prompt), and export
+  the newline-delimited file servers consume via `valiss.LoadAllowlistFile`
+  (a `#` comment header plus one jti per line). `--json` on list.
 
 ### Notes
 

@@ -39,6 +39,61 @@ func confirmed(cmd *cobra.Command, prompt string) (bool, error) {
 	}
 }
 
+// childName returns the last segment of an entity path (the entity's own name
+// within its parent).
+func childName(path string) string {
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		return path[i+1:]
+	}
+	return path
+}
+
+// writeEntityList renders a list of entities as text or JSON.
+func writeEntityList(cmd *cobra.Command, recs []store.EntityRecord) error {
+	summaries := make([]entitySummary, 0, len(recs))
+	for _, r := range recs {
+		summaries = append(summaries, summarize(r))
+	}
+	jsonOut, err := cmd.Flags().GetBool("json")
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), summaries)
+	}
+	w := cmd.OutOrStdout()
+	if len(summaries) == 0 {
+		fmt.Fprintln(w, "none")
+		return nil
+	}
+	for _, s := range summaries {
+		fmt.Fprintf(w, "%-32s %s  gen=%d epoch=%d\n", s.Path, s.PublicKey, s.Generation, s.Epoch)
+	}
+	return nil
+}
+
+// removeEntityCmd runs the shared remove flow for a non-operator entity: show
+// the blast radius, confirm, tombstone the subtree and revoke its live tokens.
+func removeEntityCmd(cmd *cobra.Command, st *store.Local, path, kindLabel string) error {
+	fallen, tokens, err := blastRadius(st, path)
+	if err != nil {
+		return err
+	}
+	if len(fallen) == 0 {
+		return fmt.Errorf("valiss: %s %q not found", kindLabel, path)
+	}
+	printBlastRadius(cmd, fallen, tokens)
+	ok, err := confirmed(cmd, fmt.Sprintf("Remove %s %q and everything under it?", kindLabel, path))
+	if err != nil || !ok {
+		return err
+	}
+	if _, _, err := removeEntity(st, path); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Removed %s %q (%d entities, %d tokens revoked)\n", kindLabel, path, len(fallen), tokens)
+	return nil
+}
+
 // writeEntity renders one entity summary as text or JSON.
 func writeEntity(cmd *cobra.Command, s entitySummary) error {
 	jsonOut, err := cmd.Flags().GetBool("json")

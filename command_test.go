@@ -215,7 +215,11 @@ func TestValidateMintFlags(t *testing.T) {
 		{"grants only", false, false, 1, false},
 		{"no-extension only", false, true, 0, false},
 		{"template unions with grants", true, false, 2, false},
-		{"no-extension with template rejected", true, true, 0, true},
+		// --no-extension may accompany a template: a template can be grantless, so
+		// the coherence check is deferred to mint time (see mintToken). Only the
+		// unambiguous flag-level contradiction, --no-extension plus a grant flag,
+		// is rejected here.
+		{"no-extension with template allowed", true, true, 0, false},
 		{"no-extension with grants rejected", false, true, 1, true},
 		{"no-extension with template and grants rejected", true, true, 1, true},
 	}
@@ -248,7 +252,7 @@ func TestMintPreRunE(t *testing.T) {
 		{"no-extension", map[string]string{"no-extension": "true"}, false},
 		{"template and grant union", map[string]string{"template": "web", "http": "example.com"}, false},
 		{"no-extension with grant", map[string]string{"no-extension": "true", "http": "example.com"}, true},
-		{"no-extension with template", map[string]string{"no-extension": "true", "template": "web"}, true},
+		{"no-extension with template", map[string]string{"no-extension": "true", "template": "web"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

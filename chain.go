@@ -384,14 +384,23 @@ func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, e
 		}
 	}
 
-	// Fail closed on blank grants. When the mint qualified only through grant
-	// flags (no template, no explicit --no-extension), an empty resolved set
-	// means every --http/--grpc/--ext value was blank ("", " ", ",,"): the
-	// fail-closed gate counts flag presence, so this is the only place a
-	// grant-only mint can still collapse to zero extensions. Refuse it rather
-	// than mint the extension-less token the operator did not opt into.
+	// Fail closed on a zero-extension resolved set. A token with no extensions is
+	// only ever minted through the explicit --no-extension opt-in, so an empty
+	// resolved set (template grants unioned with the flags) without --no-extension
+	// is refused, regardless of whether a template was named. This closes the
+	// grantless-template bypass: `template add <name>` with no grants followed by
+	// `token mint --template <name>` would otherwise sneak an extension-less token
+	// past the opt-in. Conversely, --no-extension against a set that did resolve
+	// to extensions (only reachable via a template, since --no-extension plus
+	// grant flags is rejected at flag-validation time) is a contradiction.
 	built := grants.build()
-	if p.template == "" && !p.noExtension && len(built) == 0 {
+	switch {
+	case p.noExtension && len(built) > 0:
+		return store.TokenRecord{}, fmt.Errorf("valiss: --no-extension contradicts template %q, which carries extensions; drop one", p.template)
+	case !p.noExtension && len(built) == 0:
+		if p.template != "" {
+			return store.TokenRecord{}, fmt.Errorf("valiss: template %q carries no extensions; minting a zero-extension token requires the explicit --no-extension opt-in", p.template)
+		}
 		return store.TokenRecord{}, errors.New("valiss: --http/--grpc/--ext produced no grant (all values were empty or blank)")
 	}
 

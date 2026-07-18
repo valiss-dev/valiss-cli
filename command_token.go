@@ -18,17 +18,21 @@ var mintGrantFlags = []string{"http", "grpc", "ext"}
 // validateMintFlags enforces the fail-closed extension rule for token mint
 // (ADR 0021): an unqualified mint is an error, never an unrestricted token.
 // A mint must carry at least one of a --template, an explicit grant flag,
-// or an explicit --no-extension. --no-extension is exclusive: it cannot be
-// combined with a template or with grants, since those would add the very
-// extensions it declines. A template and explicit grants may coexist; the
-// grants union with the template's grants.
+// or an explicit --no-extension. --no-extension cannot be combined with an
+// explicit grant flag, which would add the very extensions it declines. It may
+// accompany a --template, since a template can legitimately be grantless (only
+// a TTL or bearer flag): whether that combination is coherent depends on the
+// template's resolved grants, which are only known once the template is loaded,
+// so the contradiction (a --no-extension against a template that does carry
+// extensions) is caught at mint time, in mintToken. A template and explicit
+// grants may coexist; the grants union with the template's grants.
 func validateMintFlags(hasTemplate, noExtension bool, grantCount int) error {
 	qualified := hasTemplate || noExtension || grantCount > 0
 	if !qualified {
 		return errors.New("valiss: mint requires --template, at least one grant flag (--http/--grpc/--ext), or --no-extension")
 	}
-	if noExtension && (hasTemplate || grantCount > 0) {
-		return errors.New("valiss: --no-extension cannot be combined with --template or grant flags")
+	if noExtension && grantCount > 0 {
+		return errors.New("valiss: --no-extension cannot be combined with grant flags (--http/--grpc/--ext)")
 	}
 	return nil
 }
@@ -126,6 +130,7 @@ func newTokenCommand() *cobra.Command {
 	addYesFlag(revoke)
 
 	cmd.AddCommand(mint, list, show, revoke)
+	requireSubcommand(cmd)
 	return cmd
 }
 

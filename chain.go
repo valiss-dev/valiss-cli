@@ -178,12 +178,35 @@ func recordAccountIssuance(st *store.Local, acct store.EntityRecord) error {
 		return fmt.Errorf("valiss: decoding account token: %w", err)
 	}
 	return st.PutToken(store.TokenRecord{
-		JTI:       claims.ID,
-		Subject:   acct.Path,
-		Level:     store.KindAccount,
-		Token:     acct.Token,
-		MintedAt:  claims.IssuedAt,
-		ExpiresAt: claims.ExpiresAt,
+		JTI:        claims.ID,
+		Subject:    acct.Path,
+		Level:      store.KindAccount,
+		Token:      acct.Token,
+		Generation: acct.Generation,
+		MintedAt:   claims.IssuedAt,
+		ExpiresAt:  claims.ExpiresAt,
+	})
+}
+
+// recordUserIssuance stores a user entity's current token as an issuance
+// record at the entity's generation, so the tokens table is the user's token
+// generation history: the initial user-add token is generation 1, each mint
+// re-issues the next generation, and a rotation re-issues at the new epoch.
+// The user jti is never an allowlist key (the account jti governs), so this is
+// purely the issuance ledger the token verbs read.
+func recordUserIssuance(st *store.Local, user store.EntityRecord) error {
+	claims, err := valiss.Decode(user.Token)
+	if err != nil {
+		return fmt.Errorf("valiss: decoding user token: %w", err)
+	}
+	return st.PutToken(store.TokenRecord{
+		JTI:        claims.ID,
+		Subject:    user.Path,
+		Level:      store.KindUser,
+		Token:      user.Token,
+		Generation: user.Generation,
+		MintedAt:   claims.IssuedAt,
+		ExpiresAt:  claims.ExpiresAt,
 	})
 }
 
@@ -242,6 +265,9 @@ func addUser(st *store.Local, acctPath, userName string) (store.EntityRecord, er
 	if err := st.PutEntity(rec); err != nil {
 		return store.EntityRecord{}, err
 	}
+	if err := recordUserIssuance(st, rec); err != nil {
+		return store.EntityRecord{}, err
+	}
 	if err := st.Append(store.AuditEntry{Op: store.AuditEntityAdd, Path: path,
 		Detail: fmt.Sprintf("user %s gen=1 epoch=%d", pub, op.Epoch)}); err != nil {
 		return store.EntityRecord{}, err
@@ -263,13 +289,18 @@ type mintParams struct {
 	noExtension bool
 }
 
-// mintToken mints a fresh account-signed user token for the addressed user and
-// records the issuance (ADR 0021). It resolves an optional template as a
-// mint-time stamp (its name, generation, and content hash are recorded so the
-// audit reads correctly after the template evolves), unions the template's
-// grants with the explicit grant flags, reconciles TTL and the bearer flag,
-// mints with the valiss library, and persists the issuance record. The jti is
-// registered in the allowlist by the caller (unless opted out).
+// mintToken re-issues the addressed user's token: it mints a fresh
+// account-signed user token and writes it back as the user entity's next
+// generation, so the minted token becomes the entity's current token (the one
+// creds export serves). The prior generation is preserved as a retained
+// entity/issuance row (the store's append-only generation machinery, ADR 0020
+// / 0021). It resolves an optional template as a mint-time stamp (its name,
+// generation, and content hash are recorded so the audit reads correctly after
+// the template evolves), unions the template's grants with the explicit grant
+// flags, reconciles TTL and the bearer flag, mints with the valiss library,
+// and persists both the new entity generation and the issuance record. The
+// allowlist keys on the account jti, so minting a user generation does not
+// touch it.
 func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, error) {
 	user, err := st.LiveEntity(path)
 	if errors.Is(err, store.ErrNoEntity) {
@@ -385,11 +416,26 @@ func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, e
 	if err != nil {
 		return store.TokenRecord{}, fmt.Errorf("valiss: decoding minted token: %w", err)
 	}
+	// Write the minted token back as the user entity's next generation: it
+	// becomes the entity's current token, and the prior generation is retained
+	// as history (the append-only entity table). This is what makes creds
+	// export serve a minted grant/bearer token instead of the bare user-add
+	// token.
+	nextGen := user.Generation + 1
+	nextUser := user
+	nextUser.Generation = nextGen
+	nextUser.Epoch = op.Epoch
+	nextUser.Token = token
+	nextUser.CreatedAt = time.Now().UTC()
+	if err := st.PutEntity(nextUser); err != nil {
+		return store.TokenRecord{}, err
+	}
 	rec := store.TokenRecord{
 		JTI:          claims.ID,
 		Subject:      path,
 		Level:        store.KindUser,
 		Token:        token,
+		Generation:   nextGen,
 		TemplateName: tmplName,
 		TemplateGen:  tmplGen,
 		TemplateHash: tmplHash,
@@ -399,7 +445,7 @@ func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, e
 	if err := st.PutToken(rec); err != nil {
 		return store.TokenRecord{}, err
 	}
-	detail := fmt.Sprintf("user token jti=%s epoch=%d", rec.JTI, op.Epoch)
+	detail := fmt.Sprintf("user token jti=%s gen=%d epoch=%d", rec.JTI, nextGen, op.Epoch)
 	if tmplName != "" {
 		detail += fmt.Sprintf(" template=%s@%d", tmplName, tmplGen)
 	}
@@ -551,6 +597,11 @@ func reissueAccountAtEpoch(st *store.Local, opKP nkeys.KeyPair, acct store.Entit
 		nextUser.Token = userToken
 		nextUser.CreatedAt = time.Now().UTC()
 		if err := st.PutEntity(nextUser); err != nil {
+			return 0, err
+		}
+		// Record the re-issued user token as its new generation, so the token
+		// ledger stays a complete generation history across a rotation.
+		if err := recordUserIssuance(st, nextUser); err != nil {
 			return 0, err
 		}
 	}

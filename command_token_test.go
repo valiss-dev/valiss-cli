@@ -166,11 +166,14 @@ func TestTokenMintVerifiable(t *testing.T) {
 	}
 	defer st.Close()
 	acct, _ := st.LiveEntity("acme/team")
-	recs, err := st.ListTokens("acme/team/alice")
-	if err != nil || len(recs) != 1 {
-		t.Fatalf("ListTokens = %d recs (err %v), want 1", len(recs), err)
+	// Mint re-issues the user entity: gen 1 is the user-add token (no grants),
+	// gen 2 is this mint. The current token (what creds export serves) is the
+	// live entity's token, and it carries the http grant.
+	user, _ := st.LiveEntity("acme/team/alice")
+	if user.Generation != 2 {
+		t.Fatalf("user generation after one mint = %d, want 2", user.Generation)
 	}
-	claims, err := valiss.VerifyUser(recs[0].Token, acct.PublicKey)
+	claims, err := valiss.VerifyUser(user.Token, acct.PublicKey)
 	if err != nil {
 		t.Fatalf("minted token does not verify against the account: %v", err)
 	}
@@ -183,6 +186,80 @@ func TestTokenMintVerifiable(t *testing.T) {
 	}
 	if len(ext.Methods) != 2 || len(ext.Paths) != 1 {
 		t.Errorf("ext methods/paths = %v/%v, want 2/1", ext.Methods, ext.Paths)
+	}
+}
+
+// TestTokenMintReissuesGenerations asserts mint re-issues the user entity: two
+// mints advance the generation by two, the current token is the latest, and the
+// prior generations are retained and queryable via token list.
+func TestTokenMintReissuesGenerations(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VALISS_STORE_DIR", dir)
+	t.Setenv("VALISS_STORAGE_KEY", "pw")
+	for _, args := range [][]string{
+		{"operator", "add", "acme"},
+		{"account", "add", "acme/team"},
+		{"user", "add", "acme/team/alice"},
+	} {
+		if out, err := runCLI(t, args...); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Distinct grants per mint so each produces a distinct jti (the jti is a
+	// content hash), giving two distinct retained generations.
+	out1, err := runCLI(t, "token", "mint", "acme/team/alice", "--http", "one.example.com")
+	if err != nil {
+		t.Fatalf("first mint: %v\n%s", err, out1)
+	}
+	jti1 := jtiFromMint(t, out1)
+	out2, err := runCLI(t, "token", "mint", "acme/team/alice", "--http", "two.example.com")
+	if err != nil {
+		t.Fatalf("second mint: %v\n%s", err, out2)
+	}
+	jti2 := jtiFromMint(t, out2)
+
+	st, err := store.Open(dir, "acme", []byte("pw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	// gen 1 (user add) + two mints = generation 3, current token is the last mint.
+	user, _ := st.LiveEntity("acme/team/alice")
+	if user.Generation != 3 {
+		t.Errorf("user generation after two mints = %d, want 3", user.Generation)
+	}
+	cur, err := valiss.Decode(user.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur.ID != jti2 {
+		t.Errorf("current token jti = %s, want the last mint %s", cur.ID, jti2)
+	}
+
+	// Both mint generations are retained and queryable via token list.
+	lst, err := runCLI(t, "token", "list", "acme/team/alice")
+	if err != nil {
+		t.Fatalf("token list: %v\n%s", err, lst)
+	}
+	if !strings.Contains(lst, jti1) || !strings.Contains(lst, jti2) {
+		t.Errorf("token list does not show both retained generations:\n%s", lst)
+	}
+	// The current generation is marked; the prior one is retained but not current.
+	show2, err := runCLI(t, "token", "show", "acme", jti2, "--json")
+	if err != nil {
+		t.Fatalf("token show current: %v\n%s", err, show2)
+	}
+	if !strings.Contains(show2, `"current": true`) {
+		t.Errorf("latest mint not marked current:\n%s", show2)
+	}
+	show1, err := runCLI(t, "token", "show", "acme", jti1, "--json")
+	if err != nil {
+		t.Fatalf("token show prior: %v\n%s", err, show1)
+	}
+	if !strings.Contains(show1, `"current": false`) {
+		t.Errorf("prior mint marked current:\n%s", show1)
 	}
 }
 

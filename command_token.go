@@ -166,11 +166,12 @@ func runTokenMint(cmd *cobra.Command, args []string) error {
 		return printJSON(cmd.OutOrStdout(), mintResultJSON(rec, allowlisted))
 	}
 	w := cmd.OutOrStdout()
-	fmt.Fprintf(w, "Minted token for %q\n  jti: %s\n", path, rec.JTI)
+	fmt.Fprintf(w, "Minted token for %q (now generation %d, the current token)\n  jti: %s\n", path, rec.Generation, rec.JTI)
 	if !rec.ExpiresAt.IsZero() {
 		fmt.Fprintf(w, "  expires: %s\n", rec.ExpiresAt.UTC().Format(time.RFC3339))
 	}
 	fmt.Fprintf(w, "  token: %s\n", rec.Token)
+	fmt.Fprintf(w, "  next: valiss creds export %s (serves this token)\n", path)
 	return nil
 }
 
@@ -181,6 +182,7 @@ type mintJSON struct {
 	JTI         string `json:"jti"`
 	Subject     string `json:"subject"`
 	Token       string `json:"token"`
+	Generation  uint64 `json:"generation"`
 	Expires     string `json:"expires,omitempty"`
 	Bearer      bool   `json:"bearer"`
 	Allowlisted bool   `json:"allowlisted"`
@@ -188,7 +190,7 @@ type mintJSON struct {
 
 // mintResultJSON builds the JSON view of a fresh mint.
 func mintResultJSON(rec store.TokenRecord, allowlisted bool) mintJSON {
-	m := mintJSON{JTI: rec.JTI, Subject: rec.Subject, Token: rec.Token, Allowlisted: allowlisted}
+	m := mintJSON{JTI: rec.JTI, Subject: rec.Subject, Token: rec.Token, Generation: rec.Generation, Allowlisted: allowlisted}
 	if !rec.ExpiresAt.IsZero() {
 		m.Expires = rec.ExpiresAt.UTC().Format(time.RFC3339)
 	}
@@ -276,6 +278,11 @@ func runTokenList(cmd *cobra.Command, args []string) error {
 	summaries := make([]tokenSummary, len(recs))
 	for i, r := range recs {
 		summaries[i] = summarizeToken(r)
+		cur, err := isCurrentToken(st, r)
+		if err != nil {
+			return err
+		}
+		summaries[i].Current = cur
 	}
 	jsonOut, err := cmd.Flags().GetBool("json")
 	if err != nil {
@@ -290,9 +297,32 @@ func runTokenList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	for _, s := range summaries {
-		fmt.Fprintf(w, "%s  %-7s %-7s %s\n", s.JTI, s.Level, s.Status, s.Subject)
+		marker := " "
+		if s.Current {
+			marker = "*"
+		}
+		fmt.Fprintf(w, "%s %s  %-7s gen=%-3d %-7s %s\n", marker, s.JTI, s.Level, s.Generation, s.Status, s.Subject)
 	}
 	return nil
+}
+
+// isCurrentToken reports whether an issuance record is the current token of its
+// subject entity: the token creds export serves. The current token is the live
+// entity's token, so this compares the record's jti to the live entity token's
+// jti. A record whose subject entity is gone (tombstoned) is not current.
+func isCurrentToken(st *store.Local, r store.TokenRecord) (bool, error) {
+	ent, err := st.LiveEntity(r.Subject)
+	if errors.Is(err, store.ErrNoEntity) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	claims, err := valiss.Decode(ent.Token)
+	if err != nil {
+		return false, fmt.Errorf("valiss: decoding current token for %q: %w", r.Subject, err)
+	}
+	return claims.ID == r.JTI, nil
 }
 
 // runTokenShow prints one issuance record, including the token blob.
@@ -315,6 +345,11 @@ func runTokenShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	detail := tokenDetail{tokenSummary: summarizeToken(rec), Token: rec.Token}
+	cur, err := isCurrentToken(st, rec)
+	if err != nil {
+		return err
+	}
+	detail.Current = cur
 	if jsonOut {
 		return printJSON(cmd.OutOrStdout(), detail)
 	}
@@ -403,16 +438,20 @@ func userRevokeUnsupported(st *store.Local, rec store.TokenRecord) error {
 		"(generation floors, ADR 0022, are not in the library yet); %s", hint)
 }
 
-// tokenSummary is the display view of an issuance record.
+// tokenSummary is the display view of an issuance record. Generation is the
+// entity generation this issuance is (a mint re-issues the next generation);
+// Current marks the entity's current token, the one creds export serves.
 type tokenSummary struct {
-	JTI      string `json:"jti"`
-	Subject  string `json:"subject"`
-	Level    string `json:"level"`
-	Status   string `json:"status"`
-	Template string `json:"template,omitempty"`
-	Minted   string `json:"minted,omitempty"`
-	Expires  string `json:"expires,omitempty"`
-	Revoked  string `json:"revoked,omitempty"`
+	JTI        string `json:"jti"`
+	Subject    string `json:"subject"`
+	Level      string `json:"level"`
+	Status     string `json:"status"`
+	Generation uint64 `json:"generation"`
+	Current    bool   `json:"current"`
+	Template   string `json:"template,omitempty"`
+	Minted     string `json:"minted,omitempty"`
+	Expires    string `json:"expires,omitempty"`
+	Revoked    string `json:"revoked,omitempty"`
 }
 
 // tokenDetail adds the token blob to a summary, for token show.
@@ -423,7 +462,7 @@ type tokenDetail struct {
 
 // summarizeToken builds a display summary from an issuance record.
 func summarizeToken(r store.TokenRecord) tokenSummary {
-	s := tokenSummary{JTI: r.JTI, Subject: r.Subject, Level: r.Level, Status: tokenStatus(r)}
+	s := tokenSummary{JTI: r.JTI, Subject: r.Subject, Level: r.Level, Status: tokenStatus(r), Generation: r.Generation}
 	if r.TemplateName != "" {
 		s.Template = fmt.Sprintf("%s@%d", r.TemplateName, r.TemplateGen)
 	}
@@ -458,6 +497,8 @@ func writeTokenDetail(cmd *cobra.Command, d tokenDetail) error {
 	fmt.Fprintf(w, "%-12s %s\n", "subject:", d.Subject)
 	fmt.Fprintf(w, "%-12s %s\n", "level:", d.Level)
 	fmt.Fprintf(w, "%-12s %s\n", "status:", d.Status)
+	fmt.Fprintf(w, "%-12s %d\n", "generation:", d.Generation)
+	fmt.Fprintf(w, "%-12s %t\n", "current:", d.Current)
 	if d.Template != "" {
 		fmt.Fprintf(w, "%-12s %s\n", "template:", d.Template)
 	}

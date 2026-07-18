@@ -46,6 +46,8 @@ var (
 	ErrNoEntity = errors.New("valiss: entity not found")
 	// ErrNoTemplate is returned when an addressed template is absent.
 	ErrNoTemplate = errors.New("valiss: template not found")
+	// ErrNoToken is returned when an addressed issuance (by jti) is absent.
+	ErrNoToken = errors.New("valiss: token not found")
 )
 
 // Config holds the tunable, store-global parameters (ADR 0021). Today the only

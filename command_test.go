@@ -290,23 +290,22 @@ func TestStoreConfig(t *testing.T) {
 			if (err != nil) != c.wantErr {
 				t.Fatalf("Args(%v) error = %v, wantErr %v", c.args, err, c.wantErr)
 			}
-			if c.wantErr {
-				return
-			}
-			// A well-formed get or set proceeds to the shared stub.
-			if runErr := cmd.RunE(cmd, c.args); !errors.Is(runErr, errNotImplemented) {
-				t.Errorf("RunE(%v) = %v, want errNotImplemented", c.args, runErr)
-			}
+			// The store-config body is now implemented and needs a real store
+			// and passphrase; the argument-shape validation above is what this
+			// test covers. End-to-end config behavior is exercised by the
+			// store package's own tests.
 		})
 	}
 }
 
 // TestStubsReturnNotImplemented spot-checks that leaf bodies are stubs.
 func TestStubsReturnNotImplemented(t *testing.T) {
+	// inspect and the store verbs are implemented; the rest remain stubs until
+	// their store-backed bodies land.
 	for _, path := range [][]string{
 		{"operator", "add"}, {"account", "list"}, {"user", "show"},
 		{"template", "add"}, {"token", "revoke"}, {"creds", "export"},
-		{"allowlist", "export"}, {"store", "init"}, {"inspect"},
+		{"allowlist", "export"},
 	} {
 		cmd := findCommand(t, path...)
 		if err := cmd.RunE(cmd, nil); !errors.Is(err, errNotImplemented) {

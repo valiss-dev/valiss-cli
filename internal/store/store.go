@@ -48,6 +48,13 @@ var (
 	ErrNoTemplate = errors.New("valiss: template not found")
 	// ErrNoToken is returned when an addressed issuance (by jti) is absent.
 	ErrNoToken = errors.New("valiss: token not found")
+	// ErrUnreadable is returned when an existing store cannot be opened or
+	// migrated, the usual signature of a wrong passphrase: the decrypted pages
+	// fail SQLite's own header validation. The raw driver error (a "file is not
+	// a database" sqlite tail) is deliberately not wrapped into the message; it
+	// is noise to the operator, for whom the passphrase reading is the actionable
+	// one.
+	ErrUnreadable = errors.New("valiss: opening store (wrong passphrase or corrupt store?)")
 )
 
 // Config holds the tunable, store-global parameters (ADR 0021). Today the only

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -94,6 +95,7 @@ func newOperatorCommand() *cobra.Command {
 	addJSONFlag(audit)
 
 	cmd.AddCommand(add, list, show, token, rotate, remove, audit)
+	requireSubcommand(cmd)
 	return cmd
 }
 
@@ -183,27 +185,28 @@ func runOperatorList(cmd *cobra.Command, args []string) error {
 		if err := printJSON(cmd.OutOrStdout(), summaries); err != nil {
 			return err
 		}
-		reportSkippedStores(cmd, skipped)
-		return nil
+	} else {
+		// "no operators" only when the directory is genuinely empty; when stores
+		// were skipped, the aggregate error below carries the real story, so this
+		// line must not print an empty result that reads as "no data".
+		if len(summaries) == 0 && len(skipped) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "no operators")
+		}
+		for _, s := range summaries {
+			// The key is the operator public key: the shareable trust anchor.
+			fmt.Fprintf(cmd.OutOrStdout(), "%-24s public-key=%s  gen=%d epoch=%d\n", s.Name, s.PublicKey, s.Generation, s.Epoch)
+		}
 	}
-	if len(summaries) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "no operators")
+	if len(skipped) > 0 {
+		// An unreadable store must surface non-zero. A wrong passphrase across
+		// readable stores would otherwise print an empty list and exit 0, reading
+		// as "data gone" rather than "wrong passphrase". The readable operators
+		// above still print; this makes a partial read a failure, not a silent
+		// success.
+		return fmt.Errorf("valiss: %d store(s) unreadable (wrong passphrase or corrupt store?): %s",
+			len(skipped), strings.Join(skipped, ", "))
 	}
-	for _, s := range summaries {
-		// The key is the operator public key: the shareable trust anchor.
-		fmt.Fprintf(cmd.OutOrStdout(), "%-24s public-key=%s  gen=%d epoch=%d\n", s.Name, s.PublicKey, s.Generation, s.Epoch)
-	}
-	reportSkippedStores(cmd, skipped)
 	return nil
-}
-
-// reportSkippedStores notes on stderr any operator stores that could not be
-// read during a listing, so a partial list is not silently mistaken for the
-// whole set.
-func reportSkippedStores(cmd *cobra.Command, skipped []string) {
-	for _, name := range skipped {
-		fmt.Fprintf(cmd.ErrOrStderr(), "valiss: skipped unreadable store %q (wrong passphrase or corrupt store?)\n", name)
-	}
 }
 
 // runOperatorShow prints one operator's details.

@@ -147,8 +147,9 @@ func Open(dir, operator string, passphrase []byte) (*Local, error) {
 		l.Close()
 		// A migration failure on open is the usual signature of a wrong
 		// passphrase: the decrypted pages are garbage and fail SQLite's header
-		// validation. Surface that reading rather than a raw SQL error.
-		return nil, fmt.Errorf("valiss: opening store (wrong passphrase or corrupt store?): %w", err)
+		// validation. Surface that reading; the raw SQL error is dropped rather
+		// than trailing the friendly message with a "file is not a database" tail.
+		return nil, ErrUnreadable
 	}
 	if err := l.sweepAudit(ctx); err != nil {
 		l.Close()
@@ -177,10 +178,11 @@ func openEncrypted(dir, operator string, passphrase, salt []byte, create bool) (
 		// Opening an existing store decrypts its pages with the key derived from
 		// the supplied passphrase; a wrong passphrase yields garbage that fails
 		// SQLite's header check right here, before any query runs. Name the
-		// passphrase so the failure is actionable rather than a raw "file is not
-		// a database" sqlite error. (Creation cannot hit a wrong passphrase.)
+		// passphrase so the failure is actionable, and drop the raw "file is not
+		// a database" sqlite tail from the user-facing message. (Creation cannot
+		// hit a wrong passphrase.)
 		if !create {
-			return nil, fmt.Errorf("valiss: opening store (wrong passphrase or corrupt store?): %w", err)
+			return nil, ErrUnreadable
 		}
 		return nil, fmt.Errorf("valiss: opening store: %w", err)
 	}

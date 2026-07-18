@@ -40,7 +40,9 @@ func newTokenCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "token",
 		Short: "Manage tokens",
-		Long:  "Mint, inspect, and revoke tokens, the dated issuances a valiss chain signs.",
+		Long: "Mint, list, show, and revoke tokens, the dated issuances a valiss " +
+			"chain signs. To decode a token offline (no store, no trust " +
+			"evaluation), use the top-level 'valiss inspect'.",
 	}
 
 	mint := &cobra.Command{
@@ -49,6 +51,16 @@ func newTokenCommand() *cobra.Command {
 		Long: "Mint a token for the addressed user. The mint fails closed on " +
 			"extensions: pass a --template, at least one grant flag, or an " +
 			"explicit --no-extension.",
+		Example: "  # Stamp a claim template\n" +
+			"  valiss token mint acme/team/alice --template web\n\n" +
+			"  # A dimensioned HTTP grant (hosts, methods, paths)\n" +
+			"  valiss token mint acme/team/alice --http \"hosts=api.example.com;methods=GET,POST;paths=/v1/*\"\n\n" +
+			"  # A custom extension from a JSON file, plus a gRPC grant\n" +
+			"  valiss token mint acme/team/alice --grpc /acme.v1.Widgets/Get --ext quota=@quota.json\n\n" +
+			"  # Explicitly mint with no extensions (the fail-closed opt-in)\n" +
+			"  valiss token mint acme/team/alice --no-extension\n\n" +
+			"  # Capture the fresh token for a script\n" +
+			"  valiss token mint acme/team/alice --no-extension --json",
 		Args: pathArgs(depthUser, depthUser, 0),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			template, err := cmd.Flags().GetString("template")
@@ -74,15 +86,17 @@ func newTokenCommand() *cobra.Command {
 		"\"hosts=a,b;methods=GET;paths=/v1/*\" to name dimensions")
 	mint.Flags().StringArray("grpc", nil, "grant a gRPC extension for the given full method(s) (repeatable, comma-separated)")
 	mint.Flags().StringArray("ext", nil, "grant a custom extension as <name>=<json> or <name>=@<file> (repeatable)")
-	mint.Flags().Duration("ttl", 0, "token time-to-live, overriding any template TTL")
+	mint.Flags().Duration("ttl", 0, "token time-to-live, overriding any template TTL (0 = no expiry)")
 	mint.Flags().Bool("bearer", false, "mint a bearer token, accepted without per-request signatures")
 	mint.Flags().Bool("no-extension", false, "mint with no extensions (the explicit fail-closed opt-in)")
+	addJSONFlag(mint)
 
 	// list is scoped to the addressed entity subtree (operator, account, or
 	// user), since there is no ambient context.
 	list := &cobra.Command{
 		Use:   "list <operator>[/<account>[/<user>]]",
 		Short: "List tokens under an entity",
+		Long:  "List the issuance records under the addressed entity's subtree (operator, account, or user): jti, level, status, and subject.",
 		Args:  pathArgs(depthOperator, depthUser, 0),
 		RunE:  runTokenList,
 	}
@@ -91,6 +105,7 @@ func newTokenCommand() *cobra.Command {
 	show := &cobra.Command{
 		Use:   "show <operator> <jti>",
 		Short: "Show a token",
+		Long:  "Show one issuance record by jti within an operator's store, including the token blob.",
 		Args:  pathArgs(depthOperator, depthOperator, 1),
 		RunE:  runTokenShow,
 	}
@@ -136,6 +151,20 @@ func runTokenMint(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// A user token is gated by its account's allowlist entry, so report whether
+	// that governing account jti is currently allowlisted: it tells a script
+	// whether the fresh token will actually be admitted.
+	allowlisted, err := accountAllowlisted(st, path)
+	if err != nil {
+		return err
+	}
+	jsonOut, err := cmd.Flags().GetBool("json")
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), mintResultJSON(rec, allowlisted))
+	}
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "Minted token for %q\n  jti: %s\n", path, rec.JTI)
 	if !rec.ExpiresAt.IsZero() {
@@ -143,6 +172,47 @@ func runTokenMint(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(w, "  token: %s\n", rec.Token)
 	return nil
+}
+
+// mintJSON is the machine-readable shape of a fresh mint (token mint --json):
+// the jti, the subject, the token blob, its expiry, the bearer flag, and
+// whether the governing account jti is allowlisted.
+type mintJSON struct {
+	JTI         string `json:"jti"`
+	Subject     string `json:"subject"`
+	Token       string `json:"token"`
+	Expires     string `json:"expires,omitempty"`
+	Bearer      bool   `json:"bearer"`
+	Allowlisted bool   `json:"allowlisted"`
+}
+
+// mintResultJSON builds the JSON view of a fresh mint.
+func mintResultJSON(rec store.TokenRecord, allowlisted bool) mintJSON {
+	m := mintJSON{JTI: rec.JTI, Subject: rec.Subject, Token: rec.Token, Allowlisted: allowlisted}
+	if !rec.ExpiresAt.IsZero() {
+		m.Expires = rec.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	// Bearer lives in the valiss wire body, which the exported Decode does not
+	// surface; the offline inspect decode reads it straight from the payload.
+	if v, err := inspectToken(rec.Token); err == nil {
+		m.Bearer = v.Bearer
+	}
+	return m
+}
+
+// accountAllowlisted reports whether the account governing a user path has its
+// jti in the allowlist, which is what actually admits a user token minted under
+// it (the allowlist keys on the account jti).
+func accountAllowlisted(st *store.Local, userPath string) (bool, error) {
+	acct, err := st.LiveEntity(parentOf(userPath))
+	if err != nil {
+		return false, err
+	}
+	claims, err := valiss.Decode(acct.Token)
+	if err != nil {
+		return false, fmt.Errorf("valiss: decoding account token: %w", err)
+	}
+	return st.AllowlistContains(claims.ID)
 }
 
 // mintParamsFromFlags reads the token mint grant and lifecycle flags.
@@ -166,6 +236,9 @@ func mintParamsFromFlags(cmd *cobra.Command) (mintParams, error) {
 	ttl, err := cmd.Flags().GetDuration("ttl")
 	if err != nil {
 		return mintParams{}, err
+	}
+	if ttl < 0 {
+		return mintParams{}, fmt.Errorf("valiss: --ttl must not be negative (got %s); use 0 for no expiry", ttl)
 	}
 	bearer, err := cmd.Flags().GetBool("bearer")
 	if err != nil {

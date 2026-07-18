@@ -22,6 +22,10 @@ func newInspectCommand() *cobra.Command {
 			"evaluation, no store access. The self-signature carried in the " +
 			"token is checked and reported, but the issuer's place in a trust " +
 			"chain is not, so a token that decodes here is not thereby trusted.",
+		Example: "  # Decode a token string\n" +
+			"  valiss inspect eyJ0eXAiOiJKV1Qi...\n\n" +
+			"  # Decode a token captured from a mint\n" +
+			"  valiss inspect \"$(valiss token mint acme/team/alice --no-extension --json | jq -r .token)\"",
 		Args: cobra.ExactArgs(1),
 		RunE: runInspect,
 	}

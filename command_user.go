@@ -32,6 +32,7 @@ func newUserCommand() *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list <operator>/<account>",
 		Short: "List users under an account",
+		Long:  "List the live users under an account (addressed as <operator>/<account>): one per line with public key, generation, and epoch.",
 		Args:  pathArgs(depthAccount, depthAccount, 0),
 		RunE:  runUserList,
 	}
@@ -40,6 +41,7 @@ func newUserCommand() *cobra.Command {
 	show := &cobra.Command{
 		Use:   "show <operator>/<account>/<user>",
 		Short: "Show a user",
+		Long:  "Show one user (addressed as <operator>/<account>/<user>): its kind, path, public key, generation, and epoch.",
 		Args:  pathArgs(depthUser, depthUser, 0),
 		RunE:  runUserShow,
 	}
@@ -81,7 +83,9 @@ func runUserAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	s := summarize(rec)
-	fmt.Fprintf(cmd.OutOrStdout(), "Added user %q\n  key: %s\n  epoch: %d\n", s.Path, s.PublicKey, s.Epoch)
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "Added user %q\n  public key: %s\n  epoch: %d\n", s.Path, s.PublicKey, s.Epoch)
+	fmt.Fprintf(w, "  next: valiss token mint %s --template <name> (or a grant flag)\n", s.Path)
 	return nil
 }
 

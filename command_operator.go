@@ -42,6 +42,7 @@ func newOperatorCommand() *cobra.Command {
 	show := &cobra.Command{
 		Use:   "show <operator>",
 		Short: "Show an operator",
+		Long:  "Show one operator (addressed as <operator>): its kind, path, public key, generation, and epoch.",
 		Args:  pathArgs(depthOperator, depthOperator, 0),
 		RunE:  runOperatorShow,
 	}
@@ -132,7 +133,9 @@ func runOperatorAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	s := summarize(rec)
-	fmt.Fprintf(cmd.OutOrStdout(), "Added operator %q\n  key: %s\n  epoch: %d\n", s.Name, s.PublicKey, s.Epoch)
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "Added operator %q\n  public key: %s\n  epoch: %d\n", s.Name, s.PublicKey, s.Epoch)
+	fmt.Fprintf(w, "  next: valiss account add %s/<account>\n", s.Name)
 	return nil
 }
 
@@ -147,11 +150,17 @@ func runOperatorList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	var summaries []entitySummary
+	// Initialized (never nil) so --json emits [] rather than null on an empty
+	// store directory, matching every other list.
+	summaries := make([]entitySummary, 0, len(names))
+	var skipped []string
 	for _, name := range names {
 		st, err := openStore(name)
 		if err != nil {
-			return err
+			// One unreadable store (wrong passphrase, corrupt file) must not sink
+			// the whole listing: note it and carry on with the rest.
+			skipped = append(skipped, name)
+			continue
 		}
 		rec, err := st.LiveEntity(name)
 		st.Close()
@@ -160,7 +169,8 @@ func runOperatorList(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		if err != nil {
-			return err
+			skipped = append(skipped, name)
+			continue
 		}
 		summaries = append(summaries, summarize(rec))
 	}
@@ -170,16 +180,30 @@ func runOperatorList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), summaries)
+		if err := printJSON(cmd.OutOrStdout(), summaries); err != nil {
+			return err
+		}
+		reportSkippedStores(cmd, skipped)
+		return nil
 	}
 	if len(summaries) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "no operators")
-		return nil
 	}
 	for _, s := range summaries {
-		fmt.Fprintf(cmd.OutOrStdout(), "%-24s %s  gen=%d epoch=%d\n", s.Name, s.PublicKey, s.Generation, s.Epoch)
+		// The key is the operator public key: the shareable trust anchor.
+		fmt.Fprintf(cmd.OutOrStdout(), "%-24s public-key=%s  gen=%d epoch=%d\n", s.Name, s.PublicKey, s.Generation, s.Epoch)
 	}
+	reportSkippedStores(cmd, skipped)
 	return nil
+}
+
+// reportSkippedStores notes on stderr any operator stores that could not be
+// read during a listing, so a partial list is not silently mistaken for the
+// whole set.
+func reportSkippedStores(cmd *cobra.Command, skipped []string) {
+	for _, name := range skipped {
+		fmt.Fprintf(cmd.ErrOrStderr(), "valiss: skipped unreadable store %q (wrong passphrase or corrupt store?)\n", name)
+	}
 }
 
 // runOperatorShow prints one operator's details.
@@ -249,14 +273,15 @@ func runOperatorRemove(cmd *cobra.Command, args []string) error {
 		return errNoOperator
 	}
 	printBlastRadius(cmd, fallen, tokens)
-	ok, err := confirmed(cmd, fmt.Sprintf("Remove operator %q and everything above?", operator))
+	ok, err := confirmed(cmd, fmt.Sprintf("Remove operator %q and everything under it?", operator))
 	if err != nil || !ok {
 		return err
 	}
 	if _, _, err := removeEntity(st, operator); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Removed operator %q (%d entities, %d tokens revoked)\n", operator, len(fallen), tokens)
+	fmt.Fprintf(cmd.OutOrStdout(), "Removed operator %q (%d entit%s, %d token%s revoked)\n",
+		operator, len(fallen), plural(len(fallen), "y", "ies"), tokens, plural(tokens, "", "s"))
 	return nil
 }
 

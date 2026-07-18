@@ -37,6 +37,7 @@ func newAccountCommand() *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list <operator>",
 		Short: "List accounts under an operator",
+		Long:  "List the live accounts under an operator (addressed as <operator>): one per line with public key, generation, and epoch.",
 		Args:  pathArgs(depthOperator, depthOperator, 0),
 		RunE:  runAccountList,
 	}
@@ -45,6 +46,7 @@ func newAccountCommand() *cobra.Command {
 	show := &cobra.Command{
 		Use:   "show <operator>/<account>",
 		Short: "Show an account",
+		Long:  "Show one account (addressed as <operator>/<account>): its kind, path, public key, generation, epoch, and token jti.",
 		Args:  pathArgs(depthAccount, depthAccount, 0),
 		RunE:  runAccountShow,
 	}
@@ -101,7 +103,7 @@ func runAccountAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 	w := cmd.OutOrStdout()
-	fmt.Fprintf(w, "Added account %q\n  key: %s\n  epoch: %d\n  jti: %s\n", s.Path, s.PublicKey, s.Epoch, s.JTI)
+	fmt.Fprintf(w, "Added account %q\n  public key: %s\n  epoch: %d\n  jti: %s\n", s.Path, s.PublicKey, s.Epoch, s.JTI)
 	switch {
 	case noAllowlist:
 		fmt.Fprintln(w, "  allowlist: skipped (--no-allowlist)")
@@ -110,6 +112,7 @@ func runAccountAdd(cmd *cobra.Command, args []string) error {
 	default:
 		fmt.Fprintln(w, "  allowlist: already present")
 	}
+	fmt.Fprintf(w, "  next: valiss user add %s/<user>\n", s.Path)
 	return nil
 }
 

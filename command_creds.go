@@ -18,6 +18,10 @@ func newCredsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "creds",
 		Short: "Export credential artifacts",
+		Long: "Export credential artifacts for an entity. Creds are written to " +
+			"stdout in the valiss creds format; redirect to a file to save them. " +
+			"A creds file carries a signing seed unless --bearer is given, so treat " +
+			"it as a secret.",
 	}
 
 	export := &cobra.Command{
@@ -26,7 +30,15 @@ func newCredsCommand() *cobra.Command {
 		Long: "Export creds for the addressed entity, covering the four creds " +
 			"kinds the format supports: account, user, bundle (--bundle, a user " +
 			"creds that also embeds the account token), and bearer (--bearer, " +
-			"tokens only, no seed).",
+			"tokens only, no seed). Output goes to stdout; redirect it to a file.",
+		Example: "  # Account creds (account token + seed)\n" +
+			"  valiss creds export acme/team > team.creds\n\n" +
+			"  # User creds\n" +
+			"  valiss creds export acme/team/alice > alice.creds\n\n" +
+			"  # A bundle: user creds that also embed the account token\n" +
+			"  valiss creds export acme/team/alice --bundle > alice.creds\n\n" +
+			"  # Bearer creds: tokens only, no signing seed\n" +
+			"  valiss creds export acme/team/alice --bearer > alice.bearer.creds",
 		Args: pathArgs(depthOperator, depthUser, 0),
 		RunE: runCredsExport,
 	}

@@ -16,11 +16,17 @@ func newAllowlistCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "allowlist",
 		Short: "Manage the local jti allowlist",
+		Long: "Manage the operator's local jti allowlist, the fail-closed " +
+			"revocation surface. It keys on account jtis (an account add deposits " +
+			"its jti here; a token revoke removes it), and export emits exactly " +
+			"what valiss-go's LoadAllowlistFile consumes: the newline-delimited " +
+			"account jtis a server admits.",
 	}
 
 	list := &cobra.Command{
 		Use:   "list <operator>",
 		Short: "List allowlisted jtis",
+		Long:  "List the operator's allowlisted jtis (account jtis), one per line.",
 		Args:  pathArgs(depthOperator, depthOperator, 0),
 		RunE:  runAllowlistList,
 	}
@@ -132,7 +138,10 @@ func runAllowlistRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !present {
-		return fmt.Errorf("valiss: jti %q not in allowlist", jti)
+		// Idempotent, mirroring allowlist add: an absent jti is already in the
+		// desired state, so removing it is a no-op success rather than an error.
+		fmt.Fprintf(cmd.OutOrStdout(), "jti %q not in allowlist\n", jti)
+		return nil
 	}
 	ok, err := confirmed(cmd, fmt.Sprintf("Remove jti %q from the allowlist?", jti))
 	if err != nil || !ok {

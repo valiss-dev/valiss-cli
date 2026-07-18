@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -77,7 +78,15 @@ func newStoreCommand() *cobra.Command {
 		Short: "Initialize an operator store",
 		Long: "Initialize an encrypted store for an operator (ADR 0020). The " +
 			"store is a configured, empty container: the operator identity is " +
-			"created later with 'operator add'.",
+			"created later with 'operator add'. This step is optional: 'operator " +
+			"add' auto-creates the store with the default audit retention; run " +
+			"'store init' first only to set a non-default retention window.",
+		Example: "  # Default retention (90 days)\n" +
+			"  valiss store init acme\n\n" +
+			"  # Keep the audit journal forever\n" +
+			"  valiss store init acme --audit-retention 0\n\n" +
+			"  # A 30-day window\n" +
+			"  valiss store init acme --audit-retention 720h",
 		Args: pathArgs(depthOperator, depthOperator, 0),
 		RunE: runStoreInit,
 	}
@@ -117,6 +126,11 @@ func runStoreInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Match store config's validation: a negative window is meaningless. Zero is
+	// the explicit keep-forever value.
+	if retention < 0 {
+		return errors.New("valiss: audit-retention must not be negative (use 0 to keep the journal forever)")
+	}
 	st, err := initStore(operator, store.Config{AuditRetention: retention})
 	if err != nil {
 		return err
@@ -154,8 +168,8 @@ func runStoreInfo(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(w, "%-16s %s\n", "created:", info.CreatedAt.Format(time.RFC3339))
 	fmt.Fprintf(w, "%-16s spec %d / wire %d\n", "format:", info.SpecVersion, info.WireVersion)
 	fmt.Fprintf(w, "%-16s %s\n", "audit-retention:", retentionString(info.AuditRetention))
-	fmt.Fprintf(w, "%-16s %d\n", "entities:", info.Entities)
-	fmt.Fprintf(w, "%-16s %d\n", "tokens:", info.Tokens)
+	fmt.Fprintf(w, "%-16s %d live / %d total\n", "entities:", info.EntitiesLive, info.Entities)
+	fmt.Fprintf(w, "%-16s %d live / %d total\n", "tokens:", info.TokensLive, info.Tokens)
 	fmt.Fprintf(w, "%-16s %d\n", "templates:", info.Templates)
 	fmt.Fprintf(w, "%-16s %d\n", "allowlist:", info.Allowlist)
 	fmt.Fprintf(w, "%-16s %d\n", "audit lines:", info.AuditLines)
@@ -208,7 +222,9 @@ func storeInfoJSON(info store.Info) map[string]any {
 		"wire_version":    info.WireVersion,
 		"audit_retention": retentionString(info.AuditRetention),
 		"entities":        info.Entities,
+		"entities_live":   info.EntitiesLive,
 		"tokens":          info.Tokens,
+		"tokens_live":     info.TokensLive,
 		"templates":       info.Templates,
 		"allowlist":       info.Allowlist,
 		"audit_lines":     info.AuditLines,

@@ -54,14 +54,15 @@ jobs:
       # instead of storing a long-lived PAT. The token is scoped to
       # valiss-dev/homebrew-tap only (owner + repositories below), so its blast
       # radius is a single repo and it expires when the job ends. The App
-      # credentials come from repo secrets provisioned by infra (TAP_APP_ID,
-      # TAP_APP_PRIVATE_KEY).
+      # credentials come from repo secrets provisioned by infra
+      # (VALISS_GITOPS_APP_ID, VALISS_GITOPS_APP_PRIVATE_KEY, the org's
+      # general-purpose gitops App).
       - name: Mint homebrew-tap token
         id: tap-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.TAP_APP_ID }}
-          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.VALISS_GITOPS_APP_ID }}
+          private-key: ${{ secrets.VALISS_GITOPS_APP_PRIVATE_KEY }}
           owner: valiss-dev
           repositories: homebrew-tap
 

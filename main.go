@@ -23,9 +23,21 @@ var version = "0.0.0-dev"
 
 func main() {
 	if err := newRootCommand().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, normalizeError(err))
 		os.Exit(1)
 	}
+}
+
+// normalizeError renders a command error with the house "valiss:" prefix. It is
+// the single error sink, so path-validation, cobra arity, and cobra flag errors
+// (which arrive bare) read consistently with the domain errors that already
+// carry the prefix.
+func normalizeError(err error) string {
+	msg := err.Error()
+	if strings.HasPrefix(msg, "valiss:") {
+		return msg
+	}
+	return "valiss: " + msg
 }
 
 // newRootCommand builds the valiss root command and its noun-verb tree.
@@ -35,8 +47,33 @@ func newRootCommand() *cobra.Command {
 	var cfgFile string
 
 	cmd := &cobra.Command{
-		Use:     "valiss",
-		Short:   "valiss trust-domain management CLI",
+		Use:   "valiss",
+		Short: "valiss trust-domain management CLI",
+		Long: `valiss manages a trust domain: the operator, account, and user signing
+chain, the tokens it issues, and the local allowlist a server enforces.
+
+Addressing is explicit and path-shaped, with no hidden current-context:
+
+  operator            <operator>
+  account             <operator>/<account>
+  user                <operator>/<account>/<user>
+
+Getting started:
+
+  valiss store init acme            # create the encrypted store (optional; sets retention)
+  valiss operator add acme          # generate the operator identity (auto-creates the store)
+  valiss account add acme/team      # an account, its jti deposited in the allowlist
+  valiss user add acme/team/alice   # a user under the account
+  valiss token mint acme/team/alice --template web
+
+Each store is an encrypted per-operator SQLite file (default ~/.valiss/store).
+The storage passphrase comes from the VALISS_STORAGE_KEY environment variable,
+or an interactive prompt when it is unset.
+
+Environment:
+
+  VALISS_STORAGE_KEY   store passphrase (unset: prompt interactively; must not be empty)
+  VALISS_STORE_DIR     store directory (default ~/.valiss/store)`,
 		Version: version,
 		// Usage on an error is noise once flags parse; report the error only.
 		SilenceUsage:  true,

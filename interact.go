@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,10 +13,17 @@ import (
 	"valiss.dev/cli/valiss/internal/store"
 )
 
+// errAborted reports a destructive command declined at the confirmation prompt
+// (an explicit "n", or EOF on a non-interactive stdin). It is a real error so
+// the process exits non-zero: a scripted `revoke ... && echo done` must not
+// treat a decline as success.
+var errAborted = errors.New("valiss: aborted")
+
 // confirmed resolves a destructive command's go/no-go. With --yes it returns
 // true without prompting (the scripted path). Otherwise it prints the prompt
 // and reads a yes/no answer from the command's input; a non-yes answer returns
-// false with no error, so the caller aborts quietly.
+// errAborted, so the caller aborts and the process exits non-zero. The prompt
+// goes to stderr, keeping stdout a clean data channel.
 func confirmed(cmd *cobra.Command, prompt string) (bool, error) {
 	yes, err := cmd.Flags().GetBool("yes")
 	if err != nil {
@@ -24,7 +32,7 @@ func confirmed(cmd *cobra.Command, prompt string) (bool, error) {
 	if yes {
 		return true, nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s [y/N]: ", prompt)
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s [y/N]: ", prompt)
 	reader := bufio.NewReader(cmd.InOrStdin())
 	line, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
@@ -34,8 +42,7 @@ func confirmed(cmd *cobra.Command, prompt string) (bool, error) {
 	case "y", "yes":
 		return true, nil
 	default:
-		fmt.Fprintln(cmd.OutOrStdout(), "aborted")
-		return false, nil
+		return false, errAborted
 	}
 }
 
@@ -99,7 +106,8 @@ func removeEntityCmd(cmd *cobra.Command, st *store.Local, path, kindLabel string
 	if _, _, err := removeEntity(st, path); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Removed %s %q (%d entities, %d tokens revoked)\n", kindLabel, path, len(fallen), tokens)
+	fmt.Fprintf(cmd.OutOrStdout(), "Removed %s %q (%d entit%s, %d token%s revoked)\n",
+		kindLabel, path, len(fallen), plural(len(fallen), "y", "ies"), tokens, plural(tokens, "", "s"))
 	return nil
 }
 
@@ -116,7 +124,7 @@ func writeEntity(cmd *cobra.Command, s entitySummary) error {
 	fmt.Fprintf(w, "%-12s %s\n", "kind:", s.Kind)
 	fmt.Fprintf(w, "%-12s %s\n", "path:", s.Path)
 	fmt.Fprintf(w, "%-12s %s\n", "name:", s.Name)
-	fmt.Fprintf(w, "%-12s %s\n", "key:", s.PublicKey)
+	fmt.Fprintf(w, "%-12s %s\n", "public key:", s.PublicKey)
 	fmt.Fprintf(w, "%-12s %d\n", "generation:", s.Generation)
 	fmt.Fprintf(w, "%-12s %d\n", "epoch:", s.Epoch)
 	if s.JTI != "" {
@@ -131,7 +139,9 @@ func writeEntity(cmd *cobra.Command, s entitySummary) error {
 // printBlastRadius prints the entities that would fall and the count of tokens
 // that would be revoked by a removal, before the confirmation prompt.
 func printBlastRadius(cmd *cobra.Command, fallen []store.EntityRecord, tokens int) {
-	w := cmd.OutOrStdout()
+	// The blast radius is prompt context, not command output: route it to stderr
+	// so stdout stays a clean data channel.
+	w := cmd.ErrOrStderr()
 	fmt.Fprintf(w, "Removing cascades to %d entit%s and revokes %d live token%s:\n",
 		len(fallen), plural(len(fallen), "y", "ies"), tokens, plural(tokens, "", "s"))
 	for _, e := range fallen {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -21,8 +22,21 @@ func storeDir() (string, error) {
 	return store.DefaultDir()
 }
 
+// operatorNotFoundError reports that an operator store does not exist, named by
+// operator rather than by the raw .db path the store layer reports. It wraps
+// store.ErrNotFound so callers that branch on that sentinel (openOrInitStore)
+// keep working.
+type operatorNotFoundError struct{ operator string }
+
+func (e *operatorNotFoundError) Error() string {
+	return fmt.Sprintf("valiss: operator %q not found; run 'valiss operator add %s' first", e.operator, e.operator)
+}
+
+func (e *operatorNotFoundError) Unwrap() error { return store.ErrNotFound }
+
 // openStore opens an existing operator store, resolving the storage passphrase
-// from VALISS_STORAGE_KEY or an interactive prompt (ADR 0020).
+// from VALISS_STORAGE_KEY or an interactive prompt (ADR 0020). A missing store
+// is reported as a clean operator-not-found error (no raw .db path leak).
 func openStore(operator string) (*store.Local, error) {
 	dir, err := storeDir()
 	if err != nil {
@@ -32,7 +46,11 @@ func openStore(operator string) (*store.Local, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.Open(dir, operator, pass)
+	st, err := store.Open(dir, operator, pass)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, &operatorNotFoundError{operator: operator}
+	}
+	return st, err
 }
 
 // initStore creates a new operator store, resolving the passphrase with

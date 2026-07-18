@@ -174,6 +174,14 @@ func openEncrypted(dir, operator string, passphrase, salt []byte, create bool) (
 		crypto.Options{Key: key, Cipher: crypto.Adiantum},
 	)
 	if err != nil {
+		// Opening an existing store decrypts its pages with the key derived from
+		// the supplied passphrase; a wrong passphrase yields garbage that fails
+		// SQLite's header check right here, before any query runs. Name the
+		// passphrase so the failure is actionable rather than a raw "file is not
+		// a database" sqlite error. (Creation cannot hit a wrong passphrase.)
+		if !create {
+			return nil, fmt.Errorf("valiss: opening store (wrong passphrase or corrupt store?): %w", err)
+		}
 		return nil, fmt.Errorf("valiss: opening store: %w", err)
 	}
 	return &Local{db: db, operator: operator, dbPath: dbPath(dir, operator)}, nil
@@ -247,14 +255,25 @@ func (l *Local) Info() (Info, error) {
 		WireVersion:    m.WireVersion,
 		AuditRetention: time.Duration(m.AuditRetentionSeconds) * time.Second,
 	}
-	// Raw row tallies. These count history (all generations and tombstones);
-	// the live/historical distinction arrives with the entity and token verbs.
+	// Raw row tallies count history (all generations and tombstones, all revoked
+	// issuances); the live tallies below reduce them to the current world, so a
+	// caller can tell "one live operator" from "six historical rows".
 	if info.Entities, err = orm.NewRepo[entityRow](l.db).Count(ctx); err != nil {
 		return Info{}, err
 	}
 	if info.Tokens, err = orm.NewRepo[tokenRow](l.db).Count(ctx); err != nil {
 		return Info{}, err
 	}
+	live, err := l.Subtree(m.Operator)
+	if err != nil {
+		return Info{}, err
+	}
+	info.EntitiesLive = int64(len(live))
+	liveJTIs, err := l.LiveJTIsUnder(m.Operator)
+	if err != nil {
+		return Info{}, err
+	}
+	info.TokensLive = int64(len(liveJTIs))
 	if info.Templates, err = orm.NewRepo[templateRow](l.db).Count(ctx); err != nil {
 		return Info{}, err
 	}

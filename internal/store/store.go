@@ -72,12 +72,17 @@ type Info struct {
 	WireVersion int
 	// AuditRetention is the current retention window (0 = forever).
 	AuditRetention time.Duration
-	// Counts are live entity/token/template/allowlist tallies.
-	Entities   int64
-	Tokens     int64
-	Templates  int64
-	Allowlist  int64
-	AuditLines int64
+	// Entities and Tokens are total row tallies: they count history, so every
+	// generation and tombstone (Entities) and every revoked issuance (Tokens) is
+	// included. EntitiesLive and TokensLive are the live subsets: entities whose
+	// latest generation is not a tombstone, and tokens that are not revoked.
+	Entities     int64
+	EntitiesLive int64
+	Tokens       int64
+	TokensLive   int64
+	Templates    int64
+	Allowlist    int64
+	AuditLines   int64
 	// SizeBytes is the store file's size on disk.
 	SizeBytes int64
 }

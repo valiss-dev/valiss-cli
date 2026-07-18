@@ -16,6 +16,12 @@ const StorageKeyEnv = "VALISS_STORAGE_KEY"
 // variable is unset and there is no terminal to prompt on.
 var ErrNoPassphrase = errors.New("valiss: no storage passphrase: set " + StorageKeyEnv + " or run interactively")
 
+// ErrEmptyPassphrase reports that the storage passphrase resolved to empty. An
+// empty passphrase would derive a store key from nothing, leaving the store
+// effectively unprotected, so it is refused on every path (the environment
+// variable as well as the interactive prompt).
+var ErrEmptyPassphrase = errors.New("valiss: storage passphrase must not be empty")
+
 // Passphrase resolves the store passphrase (ADR 0020): the VALISS_STORAGE_KEY
 // environment variable when set, otherwise an interactive hidden prompt on the
 // controlling terminal. The passphrase is never written to disk; it is fed to
@@ -25,6 +31,9 @@ var ErrNoPassphrase = errors.New("valiss: no storage passphrase: set " + Storage
 // ErrNoPassphrase rather than blocking on a prompt that cannot be answered.
 func Passphrase() ([]byte, error) {
 	if v, ok := os.LookupEnv(StorageKeyEnv); ok {
+		if v == "" {
+			return nil, ErrEmptyPassphrase
+		}
 		return []byte(v), nil
 	}
 	return promptPassphrase("Storage passphrase: ")
@@ -36,6 +45,9 @@ func Passphrase() ([]byte, error) {
 // unrecoverable, such as initializing a new store.
 func PassphraseConfirmed() ([]byte, error) {
 	if v, ok := os.LookupEnv(StorageKeyEnv); ok {
+		if v == "" {
+			return nil, ErrEmptyPassphrase
+		}
 		return []byte(v), nil
 	}
 	first, err := promptPassphrase("New storage passphrase: ")
@@ -43,7 +55,7 @@ func PassphraseConfirmed() ([]byte, error) {
 		return nil, err
 	}
 	if len(first) == 0 {
-		return nil, errors.New("valiss: storage passphrase must not be empty")
+		return nil, ErrEmptyPassphrase
 	}
 	again, err := promptPassphrase("Confirm storage passphrase: ")
 	if err != nil {

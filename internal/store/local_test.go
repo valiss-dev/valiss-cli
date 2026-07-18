@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,8 +82,25 @@ func TestOpenWrongPassphrase(t *testing.T) {
 	dir := t.TempDir()
 	l := mustInit(t, dir, "acme", []byte("right passphrase"), Config{})
 	l.Close()
-	if _, err := Open(dir, "acme", []byte("wrong passphrase")); err == nil {
-		t.Error("Open with wrong passphrase succeeded; want failure")
+	_, err := Open(dir, "acme", []byte("wrong passphrase"))
+	if err == nil {
+		t.Fatal("Open with wrong passphrase succeeded; want failure")
+	}
+	// The failure must name the passphrase rather than surfacing a raw sqlite
+	// "file is not a database" error: a wrong passphrase fails at the encrypted
+	// open, so the friendly reading has to be attached there.
+	if !strings.Contains(err.Error(), "passphrase") {
+		t.Errorf("wrong-passphrase error = %q, want it to mention the passphrase", err)
+	}
+}
+
+func TestPassphraseRejectsEmptyEnv(t *testing.T) {
+	t.Setenv(StorageKeyEnv, "")
+	if _, err := Passphrase(); !errors.Is(err, ErrEmptyPassphrase) {
+		t.Errorf("Passphrase with empty env = %v, want ErrEmptyPassphrase", err)
+	}
+	if _, err := PassphraseConfirmed(); !errors.Is(err, ErrEmptyPassphrase) {
+		t.Errorf("PassphraseConfirmed with empty env = %v, want ErrEmptyPassphrase", err)
 	}
 }
 

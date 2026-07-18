@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,67 +38,105 @@ func jtiFromMint(t *testing.T, out string) string {
 	return ""
 }
 
+// accountJTI reads the account's jti through account show --json.
+func accountJTI(t *testing.T, path string) string {
+	t.Helper()
+	out, err := runCLI(t, "account", "show", path, "--json")
+	if err != nil {
+		t.Fatalf("account show %s: %v\n%s", path, err, out)
+	}
+	var s struct {
+		JTI string `json:"jti"`
+	}
+	if err := json.Unmarshal([]byte(out), &s); err != nil {
+		t.Fatalf("decode account show json: %v\n%s", err, out)
+	}
+	if s.JTI == "" {
+		t.Fatalf("account show has no jti:\n%s", out)
+	}
+	return s.JTI
+}
+
 func TestTokenLifecycle(t *testing.T) {
 	tokenEnv(t)
+
+	// The allowlist keys on the account jti (deposited at account add), not the
+	// user jti a mint produces.
+	acctJTI := accountJTI(t, "acme/team")
+	if al, err := runCLI(t, "allowlist", "list", "acme"); err != nil || !strings.Contains(al, acctJTI) {
+		t.Errorf("allowlist list = %q (err %v), want account jti %s", al, err, acctJTI)
+	}
 
 	// An unqualified mint fails closed.
 	if _, err := runCLI(t, "token", "mint", "acme/team/alice"); err == nil {
 		t.Error("unqualified mint succeeded; want fail-closed error")
 	}
 
+	// A user mint does not touch the allowlist: the user jti is never listed.
 	out, err := runCLI(t, "token", "mint", "acme/team/alice", "--http", "example.com")
 	if err != nil {
 		t.Fatalf("token mint: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "allowlist: registered") {
-		t.Errorf("mint output missing allowlist registration:\n%s", out)
-	}
-	jti := jtiFromMint(t, out)
-
-	// The mint deposited the jti in the allowlist.
-	if al, err := runCLI(t, "allowlist", "list", "acme"); err != nil || !strings.Contains(al, jti) {
-		t.Errorf("allowlist list = %q (err %v), want it to contain %s", al, err, jti)
+	userJTI := jtiFromMint(t, out)
+	if al, err := runCLI(t, "allowlist", "list", "acme"); err != nil || strings.Contains(al, userJTI) {
+		t.Errorf("user mint registered its jti in the allowlist: %q", al)
 	}
 
-	// token list is subtree-scoped and shows the issuance.
-	if lst, err := runCLI(t, "token", "list", "acme"); err != nil || !strings.Contains(lst, jti) {
-		t.Errorf("token list = %q (err %v), want %s", lst, err, jti)
+	// token list is subtree-scoped and shows the user issuance and the account.
+	if lst, err := runCLI(t, "token", "list", "acme"); err != nil || !strings.Contains(lst, userJTI) || !strings.Contains(lst, acctJTI) {
+		t.Errorf("token list = %q (err %v), want %s and %s", lst, err, userJTI, acctJTI)
 	}
 
 	// token show carries the token blob.
-	show, err := runCLI(t, "token", "show", "acme", jti)
-	if err != nil || !strings.Contains(show, "token:") {
+	if show, err := runCLI(t, "token", "show", "acme", userJTI); err != nil || !strings.Contains(show, "token:") {
 		t.Errorf("token show = %q (err %v)", show, err)
 	}
 
-	// Revoke removes the jti from the allowlist and marks the record revoked.
-	if rev, err := runCLI(t, "token", "revoke", "acme", jti, "--yes"); err != nil || !strings.Contains(rev, "Revoked") {
-		t.Errorf("token revoke = %q (err %v)", rev, err)
+	// Revoking a user jti is refused: it is not enforceable in v0.13.1.
+	if _, err := runCLI(t, "token", "revoke", "acme", userJTI, "--yes"); err == nil {
+		t.Error("user-jti revoke succeeded; want the not-supported refusal")
 	}
-	if al, err := runCLI(t, "allowlist", "list", "acme"); err != nil || strings.Contains(al, jti) {
-		t.Errorf("allowlist still contains revoked jti: %q", al)
+
+	// Revoking the account jti removes it from the allowlist (the enforced
+	// revocation) and cuts the account and its users.
+	if rev, err := runCLI(t, "token", "revoke", "acme", acctJTI, "--yes"); err != nil || !strings.Contains(rev, "Revoked") {
+		t.Errorf("account revoke = %q (err %v)", rev, err)
 	}
-	if show, err := runCLI(t, "token", "show", "acme", jti); err != nil || !strings.Contains(show, "revoked") {
+	if al, err := runCLI(t, "allowlist", "list", "acme"); err != nil || strings.Contains(al, acctJTI) {
+		t.Errorf("allowlist still contains revoked account jti: %q", al)
+	}
+	if show, err := runCLI(t, "token", "show", "acme", acctJTI); err != nil || !strings.Contains(show, "revoked") {
 		t.Errorf("token show after revoke = %q (err %v), want revoked status", show, err)
 	}
-	// A second revoke is a no-op, not an error.
-	if out, err := runCLI(t, "token", "revoke", "acme", jti, "--yes"); err != nil || !strings.Contains(out, "already revoked") {
+	// A second account revoke is a no-op, not an error.
+	if out, err := runCLI(t, "token", "revoke", "acme", acctJTI, "--yes"); err != nil || !strings.Contains(out, "already revoked") {
 		t.Errorf("second revoke = %q (err %v)", out, err)
 	}
 }
 
-func TestTokenMintNoAllowlist(t *testing.T) {
-	tokenEnv(t)
-	out, err := runCLI(t, "token", "mint", "acme/team/alice", "--no-extension", "--no-allowlist")
-	if err != nil {
-		t.Fatalf("mint: %v\n%s", err, out)
+func TestAccountAddNoAllowlist(t *testing.T) {
+	operatorEnv(t)
+	for _, args := range [][]string{{"operator", "add", "acme"}, {"account", "add", "acme/team", "--no-allowlist"}} {
+		if out, err := runCLI(t, args...); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
 	}
-	jti := jtiFromMint(t, out)
-	if !strings.Contains(out, "allowlist: skipped") {
-		t.Errorf("mint output missing skip note:\n%s", out)
-	}
+	jti := accountJTI(t, "acme/team")
 	if al, err := runCLI(t, "allowlist", "list", "acme"); err != nil || strings.Contains(al, jti) {
-		t.Errorf("--no-allowlist mint still registered jti: %q", al)
+		t.Errorf("--no-allowlist account add still registered jti %s: %q (err %v)", jti, al, err)
+	}
+}
+
+func TestAccountAddRegistersAllowlist(t *testing.T) {
+	operatorEnv(t)
+	for _, args := range [][]string{{"operator", "add", "acme"}, {"account", "add", "acme/team"}} {
+		if out, err := runCLI(t, args...); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	jti := accountJTI(t, "acme/team")
+	if al, err := runCLI(t, "allowlist", "list", "acme"); err != nil || !strings.Contains(al, jti) {
+		t.Errorf("account add did not register account jti %s: %q (err %v)", jti, al, err)
 	}
 }
 

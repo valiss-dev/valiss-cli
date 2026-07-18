@@ -107,10 +107,12 @@ func addOperator(st *store.Local, name string) (store.EntityRecord, error) {
 
 // addAccount creates an account identity under an operator: a fresh account
 // key and an operator-signed account token at the operator's current epoch,
-// carrying its own generation 1. The account token is not deposited in the
-// allowlist here; depositing an account's jti is a deliberate act through the
-// allowlist verb (this keeps account add fail-closed and parallel to operator
-// add). It fails if the operator is absent or the account already exists.
+// carrying its own generation 1. The account token is recorded as an issuance
+// (its jti is the allowlist key valiss-go verifies against, per
+// docs/concepts/allowlist.md), so the token verbs can address and revoke it.
+// Depositing the jti in the allowlist is the command layer's job (default on,
+// --no-allowlist to opt out). It fails if the operator is absent or the account
+// already exists.
 func addAccount(st *store.Local, opPath, acctName string) (store.EntityRecord, error) {
 	op, err := st.LiveEntity(opPath)
 	if errors.Is(err, store.ErrNoEntity) {
@@ -156,11 +158,33 @@ func addAccount(st *store.Local, opPath, acctName string) (store.EntityRecord, e
 	if err := st.PutEntity(rec); err != nil {
 		return store.EntityRecord{}, err
 	}
+	if err := recordAccountIssuance(st, rec); err != nil {
+		return store.EntityRecord{}, err
+	}
 	if err := st.Append(store.AuditEntry{Op: store.AuditEntityAdd, Path: path,
 		Detail: fmt.Sprintf("account %s gen=1 epoch=%d", pub, op.Epoch)}); err != nil {
 		return store.EntityRecord{}, err
 	}
 	return rec, nil
+}
+
+// recordAccountIssuance stores an account entity's token as an issuance record,
+// keyed by its jti. The account jti is what a server's allowlist consults
+// (verifier.go checks account.ID), so recording it as an issuance is what lets
+// the token verbs address, list, and revoke the account credential.
+func recordAccountIssuance(st *store.Local, acct store.EntityRecord) error {
+	claims, err := valiss.Decode(acct.Token)
+	if err != nil {
+		return fmt.Errorf("valiss: decoding account token: %w", err)
+	}
+	return st.PutToken(store.TokenRecord{
+		JTI:       claims.ID,
+		Subject:   acct.Path,
+		Level:     store.KindAccount,
+		Token:     acct.Token,
+		MintedAt:  claims.IssuedAt,
+		ExpiresAt: claims.ExpiresAt,
+	})
 }
 
 // addUser creates a user identity under an account: a fresh user key and an
@@ -359,11 +383,29 @@ func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, e
 	return rec, nil
 }
 
-// rotateOperator performs an epoch rotation: it keeps the operator key (the
-// pinned trust anchor) and advances the epoch/generation, re-minting the
-// self-signed operator token at the new epoch. Verifiers that adopt the new
-// operator token stop accepting account and user tokens at the old epoch, so
-// the whole domain rotates once the new operator token is distributed.
+// rotationResult reports what an epoch rotation re-issued: the new operator
+// record and how many accounts and users were re-minted at the new epoch.
+type rotationResult struct {
+	operator store.EntityRecord
+	accounts int
+	users    int
+}
+
+// rotateOperator performs a full epoch-rotation ceremony: it keeps the operator
+// key (the pinned trust anchor), advances the epoch/generation, re-mints the
+// self-signed operator token at the new epoch, and then re-issues every live
+// account and user token beneath it at the new epoch. This is what makes the
+// rotated domain usable: under WithOperatorToken, VerifyRequest requires the
+// account and user epochs to echo the operator epoch (verifier.go), so a rotate
+// that bumped only the operator token would leave the whole domain
+// unverifiable. Re-issuing the descendants is the ceremony
+// docs/concepts/rotation.md describes.
+//
+// Because an account token's jti is a content hash over its epoch, a re-issued
+// account has a new jti. The ceremony swaps the allowlist entry (old jti out,
+// new jti in) for every account that was allowlisted, so the exported allowlist
+// keeps admitting the same accounts after rotation, and marks the superseded
+// account issuance records revoked.
 //
 // Judgement call (ADR 0021 rotate is ambiguous). ADR 0021 phrases rotate as
 // retiring a "signing key," which could mean replacing the operator key. We
@@ -373,32 +415,120 @@ func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, e
 // which is same-key epoch rotation. Replacing the operator key (the
 // seed-compromise remedy that re-pins the anchor everywhere) is a distinct,
 // heavier operation not modeled by this verb.
-func rotateOperator(st *store.Local) (store.EntityRecord, error) {
+func rotateOperator(st *store.Local) (rotationResult, error) {
 	cur, err := st.LiveEntity(operatorPathOf(st))
 	if err != nil {
-		return store.EntityRecord{}, err
+		return rotationResult{}, err
 	}
-	kp, err := nkeys.FromSeed(cur.Seed)
+	opKP, err := nkeys.FromSeed(cur.Seed)
 	if err != nil {
-		return store.EntityRecord{}, fmt.Errorf("valiss: loading operator key: %w", err)
+		return rotationResult{}, fmt.Errorf("valiss: loading operator key: %w", err)
 	}
 	next := cur
 	next.Generation = cur.Generation + 1
 	next.Epoch = cur.Epoch + 1
 	next.CreatedAt = time.Now().UTC()
-	token, err := valiss.IssueOperator(kp, valiss.WithName(cur.Name), valiss.WithEpoch(next.Epoch))
+	token, err := valiss.IssueOperator(opKP, valiss.WithName(cur.Name), valiss.WithEpoch(next.Epoch))
 	if err != nil {
-		return store.EntityRecord{}, fmt.Errorf("valiss: re-minting operator token: %w", err)
+		return rotationResult{}, fmt.Errorf("valiss: re-minting operator token: %w", err)
 	}
 	next.Token = token
 	if err := st.PutEntity(next); err != nil {
-		return store.EntityRecord{}, err
+		return rotationResult{}, err
 	}
+
+	result := rotationResult{operator: next}
+	accounts, err := st.ListChildren(store.KindAccount, cur.Path)
+	if err != nil {
+		return rotationResult{}, err
+	}
+	for _, acct := range accounts {
+		users, err := reissueAccountAtEpoch(st, opKP, acct, next.Epoch)
+		if err != nil {
+			return rotationResult{}, err
+		}
+		result.accounts++
+		result.users += users
+	}
+
 	if err := st.Append(store.AuditEntry{Op: store.AuditOperatorRotate, Path: cur.Path,
-		Detail: fmt.Sprintf("epoch %d -> %d", cur.Epoch, next.Epoch)}); err != nil {
-		return store.EntityRecord{}, err
+		Detail: fmt.Sprintf("epoch %d -> %d, re-issued %d account(s) and %d user(s)",
+			cur.Epoch, next.Epoch, result.accounts, result.users)}); err != nil {
+		return rotationResult{}, err
 	}
-	return next, nil
+	return result, nil
+}
+
+// reissueAccountAtEpoch re-mints an account token (and its users' tokens) at the
+// new epoch, keeping every key. It swaps the account's allowlist entry from the
+// old jti to the new one when the account was allowlisted, marks the superseded
+// account issuance revoked, records the new account issuance, and re-mints each
+// live user token beneath it. It returns the number of users re-issued.
+func reissueAccountAtEpoch(st *store.Local, opKP nkeys.KeyPair, acct store.EntityRecord, epoch uint64) (int, error) {
+	oldClaims, err := valiss.Decode(acct.Token)
+	if err != nil {
+		return 0, fmt.Errorf("valiss: decoding account token: %w", err)
+	}
+	newToken, err := valiss.IssueAccount(opKP, acct.PublicKey, valiss.WithName(acct.Name), valiss.WithEpoch(epoch))
+	if err != nil {
+		return 0, fmt.Errorf("valiss: re-minting account token: %w", err)
+	}
+	next := acct
+	next.Generation = acct.Generation + 1
+	next.Epoch = epoch
+	next.Token = newToken
+	next.CreatedAt = time.Now().UTC()
+	if err := st.PutEntity(next); err != nil {
+		return 0, err
+	}
+	// Supersede the old account issuance and record the new one.
+	if err := st.RevokeToken(oldClaims.ID, time.Now().UTC()); err != nil {
+		return 0, err
+	}
+	if err := recordAccountIssuance(st, next); err != nil {
+		return 0, err
+	}
+	// Preserve allowlist membership across the jti change.
+	wasAllowed, err := st.AllowlistContains(oldClaims.ID)
+	if err != nil {
+		return 0, err
+	}
+	if wasAllowed {
+		newClaims, err := valiss.Decode(newToken)
+		if err != nil {
+			return 0, fmt.Errorf("valiss: decoding re-minted account token: %w", err)
+		}
+		if _, err := st.RemoveAllowlist(oldClaims.ID); err != nil {
+			return 0, err
+		}
+		if _, err := st.AddAllowlist(newClaims.ID, time.Now().UTC()); err != nil {
+			return 0, err
+		}
+	}
+
+	acctKP, err := nkeys.FromSeed(acct.Seed)
+	if err != nil {
+		return 0, fmt.Errorf("valiss: loading account key: %w", err)
+	}
+	users, err := st.ListChildren(store.KindUser, acct.Path)
+	if err != nil {
+		return 0, err
+	}
+	for _, user := range users {
+		userToken, err := valiss.IssueUser(acctKP, user.PublicKey, valiss.WithName(user.Name), valiss.WithEpoch(epoch))
+		if err != nil {
+			return 0, fmt.Errorf("valiss: re-minting user token: %w", err)
+		}
+		nextUser := user
+		nextUser.Generation = user.Generation + 1
+		nextUser.Epoch = epoch
+		nextUser.Token = userToken
+		nextUser.CreatedAt = time.Now().UTC()
+		if err := st.PutEntity(nextUser); err != nil {
+			return 0, err
+		}
+	}
+	return len(users), nil
 }
 
 // removeEntity tombstones an entity and its subtree and revokes the subtree's

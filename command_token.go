@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"valiss.dev/cli/valiss/internal/store"
+	"valiss.dev/valiss"
 )
 
 // mintGrantFlags are the explicit extension-grant flags. Any of them, set
@@ -76,7 +77,6 @@ func newTokenCommand() *cobra.Command {
 	mint.Flags().Duration("ttl", 0, "token time-to-live, overriding any template TTL")
 	mint.Flags().Bool("bearer", false, "mint a bearer token, accepted without per-request signatures")
 	mint.Flags().Bool("no-extension", false, "mint with no extensions (the explicit fail-closed opt-in)")
-	mint.Flags().Bool("no-allowlist", false, "do not register the jti in the local allowlist")
 
 	// list is scoped to the addressed entity subtree (operator, account, or
 	// user), since there is no ambient context.
@@ -99,9 +99,14 @@ func newTokenCommand() *cobra.Command {
 	revoke := &cobra.Command{
 		Use:   "revoke <operator> <jti>",
 		Short: "Revoke a token",
-		Long:  "Revoke a token: its jti leaves the operator's allowlist.",
-		Args:  pathArgs(depthOperator, depthOperator, 1),
-		RunE:  runTokenRevoke,
+		Long: "Revoke a token. Revocation a server enforces is an account jti " +
+			"leaving the allowlist (verifier.go gates on the account jti), which " +
+			"cryptographically cuts the account and every user beneath it. So a " +
+			"revoke names an account jti. Per-user-token revocation is the " +
+			"generation-floor mechanism of ADR 0022, not yet in valiss v0.13.1: " +
+			"revoking a user jti is refused with guidance to revoke its account.",
+		Args: pathArgs(depthOperator, depthOperator, 1),
+		RunE: runTokenRevoke,
 	}
 	addYesFlag(revoke)
 
@@ -109,8 +114,12 @@ func newTokenCommand() *cobra.Command {
 	return cmd
 }
 
-// runTokenMint mints a token for the addressed user, records the issuance, and
-// registers its jti in the local allowlist by default (ADR 0021).
+// runTokenMint mints a user token for the addressed user and records the
+// issuance. It does not touch the allowlist: a server verifies the allowlist
+// against the ACCOUNT jti (verifier.go checks account.ID), not the user jti, so
+// a user token is gated by its account's allowlist entry, deposited at
+// 'account add'. Revoking the user's authority is revoking (or removing) its
+// account.
 func runTokenMint(cmd *cobra.Command, args []string) error {
 	path := args[0]
 	p, err := mintParamsFromFlags(cmd)
@@ -127,32 +136,10 @@ func runTokenMint(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	noAllowlist, err := cmd.Flags().GetBool("no-allowlist")
-	if err != nil {
-		return err
-	}
-	registered := false
-	if !noAllowlist {
-		if registered, err = st.AddAllowlist(rec.JTI, time.Now().UTC()); err != nil {
-			return err
-		}
-		if err := st.Append(store.AuditEntry{Op: store.AuditAllowlistAdd, Path: path,
-			Detail: fmt.Sprintf("jti=%s (mint)", rec.JTI)}); err != nil {
-			return err
-		}
-	}
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "Minted token for %q\n  jti: %s\n", path, rec.JTI)
 	if !rec.ExpiresAt.IsZero() {
 		fmt.Fprintf(w, "  expires: %s\n", rec.ExpiresAt.UTC().Format(time.RFC3339))
-	}
-	switch {
-	case noAllowlist:
-		fmt.Fprintln(w, "  allowlist: skipped (--no-allowlist)")
-	case registered:
-		fmt.Fprintln(w, "  allowlist: registered")
-	default:
-		fmt.Fprintln(w, "  allowlist: already present")
 	}
 	fmt.Fprintf(w, "  token: %s\n", rec.Token)
 	return nil
@@ -261,8 +248,14 @@ func runTokenShow(cmd *cobra.Command, args []string) error {
 	return writeTokenDetail(cmd, detail)
 }
 
-// runTokenRevoke revokes a token: it marks the record revoked and removes the
-// jti from the allowlist.
+// runTokenRevoke revokes a token at the granularity a server actually enforces.
+//
+// The allowlist keys on account jtis, so an account jti leaving the allowlist
+// is the only revocation valiss v0.13.1 enforces; it cuts the account and,
+// cryptographically, every user beneath it (docs/concepts/allowlist.md,
+// "Revoking an account kills its users"). A user jti is not on the allowlist
+// and there is no per-user enforcement yet (ADR 0022 generation floors), so
+// revoking one is refused with guidance rather than silently doing nothing.
 func runTokenRevoke(cmd *cobra.Command, args []string) error {
 	st, err := openStore(args[0])
 	if err != nil {
@@ -278,26 +271,63 @@ func runTokenRevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if rec.Level != store.KindAccount {
+		return userRevokeUnsupported(st, rec)
+	}
 	if rec.Revoked {
 		fmt.Fprintf(cmd.OutOrStdout(), "Token %q already revoked\n", jti)
 		return nil
 	}
-	ok, err := confirmed(cmd, fmt.Sprintf("Revoke token %q (its jti leaves the allowlist)?", jti))
+	// The blast radius: the account plus its live users, cut in one edit.
+	users, err := st.LiveJTIsUnder(rec.Subject)
+	if err != nil {
+		return err
+	}
+	ok, err := confirmed(cmd, fmt.Sprintf(
+		"Revoke account jti %q? This removes it from the allowlist, cutting account %q and all its users (%d live descendant token(s)).",
+		jti, rec.Subject, countUserTokens(users, jti)))
 	if err != nil || !ok {
 		return err
 	}
-	if err := st.RevokeToken(jti, time.Now().UTC()); err != nil {
-		return err
-	}
-	if _, err := st.RemoveAllowlist(jti); err != nil {
+	// Removing the account jti from the allowlist is the enforced revocation;
+	// marking the descendant issuance records revoked keeps the store's view
+	// consistent with the cryptographic reality that they no longer verify.
+	if _, err := st.RevokeJTIsUnder(rec.Subject, time.Now().UTC()); err != nil {
 		return err
 	}
 	if err := st.Append(store.AuditEntry{Op: store.AuditTokenRevoke, Path: rec.Subject,
-		Detail: fmt.Sprintf("jti=%s", jti)}); err != nil {
+		Detail: fmt.Sprintf("account jti=%s (cuts account and users)", jti)}); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Revoked token %q\n", jti)
+	fmt.Fprintf(cmd.OutOrStdout(), "Revoked account %q (jti %s left the allowlist; its users are cut)\n", rec.Subject, jti)
 	return nil
+}
+
+// countUserTokens counts the live descendant tokens under an account that are
+// not the account issuance itself.
+func countUserTokens(under []string, accountJTI string) int {
+	n := 0
+	for _, j := range under {
+		if j != accountJTI {
+			n++
+		}
+	}
+	return n
+}
+
+// userRevokeUnsupported reports that per-user-token revocation is not enforced
+// by valiss v0.13.1 and points the operator at the account jti to revoke
+// instead, naming it when the parent account resolves.
+func userRevokeUnsupported(st *store.Local, rec store.TokenRecord) error {
+	hint := "revoke its account (its jti is the allowlist key)"
+	if acct, err := st.LiveEntity(parentOf(rec.Subject)); err == nil {
+		if claims, derr := valiss.Decode(acct.Token); derr == nil {
+			hint = fmt.Sprintf("revoke its account: token revoke %s %s (cuts the whole account and all its users)",
+				operatorOf(rec.Subject), claims.ID)
+		}
+	}
+	return fmt.Errorf("valiss: per-user-token revocation is not enforced by valiss v0.13.1 "+
+		"(generation floors, ADR 0022, are not in the library yet); %s", hint)
 }
 
 // tokenSummary is the display view of an issuance record.

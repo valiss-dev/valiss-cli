@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,11 +23,14 @@ func newAccountCommand() *cobra.Command {
 		Use:   "add <operator>/<account>",
 		Short: "Add an account",
 		Long: "Add an account under an operator: generate its key and an " +
-			"operator-signed account token. The account's jti is deposited in " +
-			"the allowlist separately, through the allowlist command.",
+			"operator-signed account token. The account token's jti is the key " +
+			"a server's allowlist consults, so it is deposited in the local " +
+			"allowlist by default; pass --no-allowlist to opt out (for minting " +
+			"into a domain whose allowlist lives elsewhere).",
 		Args: pathArgs(depthAccount, depthAccount, 0),
 		RunE: runAccountAdd,
 	}
+	add.Flags().Bool("no-allowlist", false, "do not deposit the account jti in the local allowlist")
 
 	// list is scoped to the addressed operator: it lists that operator's
 	// accounts, since there is no ambient operator context.
@@ -71,6 +75,10 @@ func newAccountCommand() *cobra.Command {
 
 func runAccountAdd(cmd *cobra.Command, args []string) error {
 	path := args[0]
+	noAllowlist, err := cmd.Flags().GetBool("no-allowlist")
+	if err != nil {
+		return err
+	}
 	st, err := openStore(operatorOf(path))
 	if err != nil {
 		return err
@@ -82,7 +90,26 @@ func runAccountAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	s := summarize(rec)
-	fmt.Fprintf(cmd.OutOrStdout(), "Added account %q\n  key: %s\n  epoch: %d\n", s.Path, s.PublicKey, s.Epoch)
+	registered := false
+	if !noAllowlist {
+		if registered, err = st.AddAllowlist(s.JTI, time.Now().UTC()); err != nil {
+			return err
+		}
+		if err := st.Append(store.AuditEntry{Op: store.AuditAllowlistAdd, Path: path,
+			Detail: fmt.Sprintf("jti=%s (account add)", s.JTI)}); err != nil {
+			return err
+		}
+	}
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "Added account %q\n  key: %s\n  epoch: %d\n  jti: %s\n", s.Path, s.PublicKey, s.Epoch, s.JTI)
+	switch {
+	case noAllowlist:
+		fmt.Fprintln(w, "  allowlist: skipped (--no-allowlist)")
+	case registered:
+		fmt.Fprintln(w, "  allowlist: registered")
+	default:
+		fmt.Fprintln(w, "  allowlist: already present")
+	}
 	return nil
 }
 

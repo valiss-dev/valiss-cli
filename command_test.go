@@ -29,7 +29,7 @@ func findCommand(t *testing.T, path ...string) *cobra.Command {
 func TestTreeShape(t *testing.T) {
 	paths := [][]string{
 		{"operator", "add"}, {"operator", "list"}, {"operator", "show"},
-		{"operator", "rotate"}, {"operator", "remove"}, {"operator", "audit"},
+		{"operator", "token"}, {"operator", "rotate"}, {"operator", "remove"}, {"operator", "audit"},
 
 		{"account", "add"}, {"account", "list"}, {"account", "show"},
 		{"account", "remove"}, {"account", "audit"},
@@ -99,8 +99,12 @@ func TestFlagPresence(t *testing.T) {
 		{[]string{"token", "revoke"}, []string{"yes"}},
 		{[]string{"allowlist", "remove"}, []string{"yes"}},
 
-		// Grant and issuance flags on mint.
-		{[]string{"token", "mint"}, []string{"template", "http", "grpc", "ext", "ttl", "bearer", "no-extension", "no-allowlist"}},
+		// Grant and issuance flags on mint. The allowlist keys on account
+		// jtis, so allowlist registration lives on account add, not user mint.
+		{[]string{"token", "mint"}, []string{"template", "http", "grpc", "ext", "ttl", "bearer", "no-extension"}},
+
+		// account add deposits the account jti in the allowlist by default.
+		{[]string{"account", "add"}, []string{"no-allowlist"}},
 
 		// Claimset flags on template add.
 		{[]string{"template", "add"}, []string{"http", "grpc", "custom", "ttl", "bearer", "description"}},

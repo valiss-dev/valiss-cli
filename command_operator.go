@@ -47,6 +47,18 @@ func newOperatorCommand() *cobra.Command {
 	}
 	addJSONFlag(show)
 
+	token := &cobra.Command{
+		Use:   "token <operator>",
+		Short: "Print the operator's self-signed token",
+		Long: "Print the operator's self-signed token, the trust domain's policy " +
+			"statement (epoch and validity window). It is what a server pins with " +
+			"valiss-go's Verifier WithOperatorToken to enforce epoch rotation; the " +
+			"operator public key remains the trust anchor. The token carries no " +
+			"seed and is safe to distribute.",
+		Args: pathArgs(depthOperator, depthOperator, 0),
+		RunE: runOperatorToken,
+	}
+
 	rotate := &cobra.Command{
 		Use:   "rotate <operator>",
 		Short: "Rotate an operator signing key",
@@ -80,8 +92,29 @@ func newOperatorCommand() *cobra.Command {
 	}
 	addJSONFlag(audit)
 
-	cmd.AddCommand(add, list, show, rotate, remove, audit)
+	cmd.AddCommand(add, list, show, token, rotate, remove, audit)
 	return cmd
+}
+
+// runOperatorToken prints the operator's self-signed token blob, so it can be
+// handed to a server's WithOperatorToken.
+func runOperatorToken(cmd *cobra.Command, args []string) error {
+	operator := args[0]
+	st, err := openStore(operator)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	rec, err := st.LiveEntity(operator)
+	if errors.Is(err, store.ErrNoEntity) {
+		return errNoOperator
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), rec.Token)
+	return nil
 }
 
 // runOperatorAdd creates the operator identity, auto-initializing the store
@@ -182,15 +215,19 @@ func runOperatorRotate(cmd *cobra.Command, args []string) error {
 	} else if err != nil {
 		return err
 	}
-	ok, err := confirmed(cmd, fmt.Sprintf("Rotate operator %q (advance its epoch and re-mint its token)?", operator))
+	ok, err := confirmed(cmd, fmt.Sprintf("Rotate operator %q (advance its epoch and re-issue all accounts and users at the new epoch)?", operator))
 	if err != nil || !ok {
 		return err
 	}
-	rec, err := rotateOperator(st)
+	res, err := rotateOperator(st)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Rotated operator %q to epoch %d\n", operator, rec.Epoch)
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "Rotated operator %q to epoch %d\n", operator, res.operator.Epoch)
+	fmt.Fprintf(w, "  re-issued: %d account(s), %d user(s) at epoch %d\n", res.accounts, res.users, res.operator.Epoch)
+	fmt.Fprintln(w, "  allowlist: account entries swapped to the new jtis")
+	fmt.Fprintln(w, "  next: re-export creds and the allowlist; distribute the new operator token (operator token)")
 	return nil
 }
 

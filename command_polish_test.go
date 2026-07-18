@@ -175,3 +175,158 @@ func TestErrorPrefixNormalized(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// TestMintGrantlessTemplateRejected asserts a template that carries no
+// extensions cannot mint a zero-extension token without the explicit
+// --no-extension opt-in: the grantless-template bypass is closed.
+func TestMintGrantlessTemplateRejected(t *testing.T) {
+	tokenEnv(t)
+	// A template with only a TTL carries no extensions.
+	if out, err := runCLI(t, "template", "add", "acme/bare", "--ttl", "1h"); err != nil {
+		t.Fatalf("template add: %v\n%s", err, out)
+	}
+	if _, err := runCLI(t, "token", "mint", "acme/team/alice", "--template", "bare"); err == nil {
+		t.Error("grantless-template mint succeeded; want zero-extension rejection")
+	}
+	// The same mint with --no-extension is the legitimate opt-in and is accepted.
+	if out, err := runCLI(t, "token", "mint", "acme/team/alice", "--template", "bare", "--no-extension"); err != nil {
+		t.Errorf("grantless-template mint with --no-extension failed: %v\n%s", err, out)
+	}
+}
+
+// TestMintNoExtensionContradictsGrantedTemplate asserts --no-extension against a
+// template that does carry extensions is refused as a contradiction, rather
+// than silently dropping the template's grants.
+func TestMintNoExtensionContradictsGrantedTemplate(t *testing.T) {
+	tokenEnv(t)
+	if out, err := runCLI(t, "template", "add", "acme/web", "--http", "api.example.com"); err != nil {
+		t.Fatalf("template add: %v\n%s", err, out)
+	}
+	if _, err := runCLI(t, "token", "mint", "acme/team/alice", "--template", "web", "--no-extension"); err == nil {
+		t.Error("--no-extension against a granted template succeeded; want contradiction rejection")
+	}
+}
+
+// TestOperatorListWrongPassphraseErrors asserts a read against readable stores
+// with the wrong passphrase surfaces non-zero, rather than printing an empty
+// list that reads as "data gone".
+func TestOperatorListWrongPassphraseErrors(t *testing.T) {
+	operatorEnv(t)
+	if out, err := runCLI(t, "operator", "add", "acme"); err != nil {
+		t.Fatalf("operator add: %v\n%s", err, out)
+	}
+	t.Setenv("VALISS_STORAGE_KEY", "the-wrong-passphrase")
+	out, err := runCLI(t, "operator", "list")
+	if err == nil {
+		t.Errorf("operator list with the wrong passphrase succeeded; want non-zero exit\n%s", out)
+	}
+	if strings.Contains(out, "no operators") {
+		t.Errorf("wrong-passphrase list printed \"no operators\" (reads as data-gone):\n%s", out)
+	}
+}
+
+// TestOperatorListEmptyClean asserts a genuinely empty store directory stays a
+// clean, zero-exit empty result, distinct from an unreadable-store failure.
+func TestOperatorListEmptyClean(t *testing.T) {
+	operatorEnv(t)
+	out, err := runCLI(t, "operator", "list")
+	if err != nil {
+		t.Fatalf("empty operator list errored: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "no operators") {
+		t.Errorf("empty operator list = %q, want \"no operators\"", strings.TrimSpace(out))
+	}
+}
+
+// TestWrongPassphraseMessageHasNoDriverTail asserts the wrong-passphrase message
+// keeps the friendly prefix and does not trail a raw sqlite driver error.
+func TestWrongPassphraseMessageHasNoDriverTail(t *testing.T) {
+	operatorEnv(t)
+	if out, err := runCLI(t, "operator", "add", "acme"); err != nil {
+		t.Fatalf("operator add: %v\n%s", err, out)
+	}
+	t.Setenv("VALISS_STORAGE_KEY", "the-wrong-passphrase")
+	_, err := runCLI(t, "operator", "show", "acme")
+	if err == nil {
+		t.Fatal("operator show with the wrong passphrase succeeded; want error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "wrong passphrase") {
+		t.Errorf("message = %q, want the friendly passphrase reading", msg)
+	}
+	for _, tail := range []string{"sqlite", "not a database", "(26)"} {
+		if strings.Contains(msg, tail) {
+			t.Errorf("message leaks the raw driver tail %q: %q", tail, msg)
+		}
+	}
+}
+
+// TestBlankPathSegmentsRejected asserts entity names that are blank or contain
+// whitespace are rejected before any store is touched.
+func TestBlankPathSegmentsRejected(t *testing.T) {
+	operatorEnv(t)
+	if _, err := runCLI(t, "operator", "add", "   "); err == nil {
+		t.Error("operator add of a whitespace-only name succeeded; want rejection")
+	}
+	if out, err := runCLI(t, "operator", "add", "acme"); err != nil {
+		t.Fatalf("operator add: %v\n%s", err, out)
+	}
+	if _, err := runCLI(t, "account", "add", "acme/te am"); err == nil {
+		t.Error("account add with a whitespace name segment succeeded; want rejection")
+	}
+}
+
+// TestHTTPBareSeparatorRejected asserts a bare --http value that is blank or a
+// pure clause separator is refused rather than minting a garbage host.
+func TestHTTPBareSeparatorRejected(t *testing.T) {
+	for _, v := range []string{";", "a;b", "  "} {
+		tokenEnv(t)
+		if _, err := runCLI(t, "token", "mint", "acme/team/alice", "--http", v); err == nil {
+			t.Errorf("mint --http %q succeeded; want rejection", v)
+		}
+	}
+}
+
+// TestUnknownSubcommandExitsNonZero asserts a typo'd subcommand under a noun
+// exits non-zero (matching an unknown root command), while a bare noun still
+// prints help and exits zero.
+func TestUnknownSubcommandExitsNonZero(t *testing.T) {
+	operatorEnv(t)
+	for _, noun := range []string{"operator", "account", "user", "template", "token", "creds", "allowlist", "store"} {
+		if _, err := runCLI(t, noun, "frobnicate"); err == nil {
+			t.Errorf("`%s frobnicate` returned nil; want non-zero exit on an unknown subcommand", noun)
+		}
+	}
+	if _, err := runCLI(t, "token"); err != nil {
+		t.Errorf("bare `token` errored: %v; want help and a zero exit", err)
+	}
+}
+
+// TestAllowlistExportSingularPlural asserts the export header pluralizes the
+// jti count with the shared helper.
+func TestAllowlistExportSingularPlural(t *testing.T) {
+	operatorEnv(t)
+	if out, err := runCLI(t, "operator", "add", "acme"); err != nil {
+		t.Fatalf("operator add: %v\n%s", err, out)
+	}
+	if _, err := runCLI(t, "allowlist", "add", "acme", "JTI-1"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLI(t, "allowlist", "export", "acme")
+	if err != nil {
+		t.Fatalf("export: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "(1 jti)") {
+		t.Errorf("export header = %q, want it to read \"(1 jti)\"", out)
+	}
+	if _, err := runCLI(t, "allowlist", "add", "acme", "JTI-2"); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runCLI(t, "allowlist", "export", "acme")
+	if err != nil {
+		t.Fatalf("export: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "(2 jtis)") {
+		t.Errorf("export header = %q, want it to read \"(2 jtis)\"", out)
+	}
+}

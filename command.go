@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 )
@@ -28,8 +29,14 @@ func validatePath(s string, minDepth, maxDepth int) error {
 	}
 	parts := strings.Split(s, "/")
 	for _, p := range parts {
-		if p == "" {
+		if strings.TrimSpace(p) == "" {
+			// A segment that is empty, or only whitespace, would name a file like
+			// "   .db" or an entity with no readable identity. Trim first so blank
+			// and whitespace-only segments fail the same way an empty one does.
 			return fmt.Errorf("path %q has an empty segment", s)
+		}
+		if strings.ContainsFunc(p, unicode.IsSpace) {
+			return fmt.Errorf("path %q has a segment with whitespace (%q); names must not contain whitespace", s, p)
 		}
 	}
 	switch n := len(parts); {
@@ -74,6 +81,19 @@ func pathArgs(minDepth, maxDepth, extra int) cobra.PositionalArgs {
 			}
 		}
 		return nil
+	}
+}
+
+// requireSubcommand makes a noun command reject an unknown or typo'd
+// subcommand with a non-zero exit, matching how an unknown root command exits
+// non-zero. Cobra's default for a parent command with no Run is to print help
+// and exit 0, so a mistyped verb ("valiss token frobnicate") would look like
+// success. cobra.NoArgs turns the stray argument into an "unknown command"
+// error, while a bare noun (no arguments) still falls through to Help.
+func requireSubcommand(cmd *cobra.Command) {
+	cmd.Args = cobra.NoArgs
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		return cmd.Help()
 	}
 }
 

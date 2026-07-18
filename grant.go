@@ -94,6 +94,17 @@ func (b *grantBuilder) addRaw(name string, payload json.RawMessage) error {
 // with dimension one of hosts, methods, or paths.
 func (b *grantBuilder) addHTTPFlag(value string) error {
 	if !strings.Contains(value, "=") {
+		// A bare value is a host (or comma-separated hosts). Reject a value that is
+		// blank, or that carries a clause separator without the dimensioned
+		// "key=value" form: both would otherwise mint a garbage host named ";" or
+		// silently drop to nothing.
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("valiss: --http value %q is blank", value)
+		}
+		if strings.Contains(value, ";") {
+			return fmt.Errorf("valiss: --http value %q has a ';' clause separator but no key=value dimension; "+
+				"use \"hosts=a,b;methods=GET;paths=/v1/*\" to name dimensions, or a bare host without ';'", value)
+		}
 		b.httpHosts.addAll(splitCSV(value))
 		return nil
 	}

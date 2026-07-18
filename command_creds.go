@@ -50,6 +50,7 @@ func newCredsCommand() *cobra.Command {
 	export.Flags().Bool("bearer", false, "export tokens only, without the signing seed")
 
 	cmd.AddCommand(export)
+	requireSubcommand(cmd)
 	return cmd
 }
 

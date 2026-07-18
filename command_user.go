@@ -67,6 +67,7 @@ func newUserCommand() *cobra.Command {
 	addJSONFlag(audit)
 
 	cmd.AddCommand(add, list, show, remove, audit)
+	requireSubcommand(cmd)
 	return cmd
 }
 

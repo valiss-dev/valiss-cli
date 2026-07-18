@@ -114,6 +114,7 @@ func newStoreCommand() *cobra.Command {
 	addJSONFlag(config)
 
 	cmd.AddCommand(initCmd, info, config)
+	requireSubcommand(cmd)
 	return cmd
 }
 

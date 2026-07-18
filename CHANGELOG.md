@@ -50,6 +50,13 @@ changes may land in minor releases and are flagged **Breaking** below.
   fresh user key and an account-signed user token at the domain's current
   epoch), list an account's users, show one, remove, and read the audit
   journal. `--json` on the read verbs.
+- `template add | list | show | remove | audit`: manage per-operator claim
+  templates (extension grants, TTL, bearer, description; never identity
+  claims). add creates generation 1 or, under an existing name with new
+  content, the next generation (identical content is a no-op, deduplicated by
+  an order-independent content hash); show and audit accept a `<name>@<gen>`
+  pin; remove retires the name for new mints. Each generation carries a content
+  hash and a random salt (for the ADR 0022 wire name-digest scheme).
 
 ### Notes
 

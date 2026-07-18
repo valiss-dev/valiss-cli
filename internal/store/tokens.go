@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -28,10 +29,23 @@ type TokenRecord struct {
 	RevokedAt    time.Time
 }
 
-// PutToken records an issuance. A token row is written once at mint; a later
-// revocation updates the row in place (RevokeToken) rather than appending, so
-// a jti maps to exactly one record.
+// PutToken records an issuance. A jti is a SHA-256 content hash, so it maps to
+// exactly one record: a re-mint of identical content (same jti, same token
+// blob) is a no-op rather than a duplicate row, and the jti column's unique
+// constraint backs that invariant. A jti seen with a different token blob is a
+// content-hash collision and an error, never a silent overwrite. A later
+// revocation updates the row in place (RevokeToken) rather than appending.
 func (l *Local) PutToken(r TokenRecord) error {
+	existing, err := l.Token(r.JTI)
+	switch {
+	case err == nil:
+		if existing.Token == r.Token {
+			return nil
+		}
+		return fmt.Errorf("valiss: jti %q already records a different token", r.JTI)
+	case !errors.Is(err, ErrNoToken):
+		return err
+	}
 	row := tokenRow{
 		JTI:          r.JTI,
 		Subject:      r.Subject,

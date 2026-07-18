@@ -71,6 +71,35 @@ func TestTokenRecords(t *testing.T) {
 	}
 }
 
+// TestPutTokenIdempotent asserts a jti maps to exactly one record: re-putting
+// identical content is a no-op, while a jti reused for a different token blob
+// is rejected rather than duplicated (the unique constraint's invariant).
+func TestPutTokenIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	l := mustInit(t, dir, "acme", []byte("pw"), Config{})
+	defer l.Close()
+
+	rec := TokenRecord{JTI: "jti-x", Subject: "acme/team", Level: KindAccount, Token: "tok-x", MintedAt: time.Now().UTC()}
+	if err := l.PutToken(rec); err != nil {
+		t.Fatalf("PutToken: %v", err)
+	}
+	// A second identical put is a no-op, not a duplicate row or an error.
+	if err := l.PutToken(rec); err != nil {
+		t.Fatalf("PutToken idempotent: %v", err)
+	}
+	all, err := l.ListTokens("acme")
+	if err != nil {
+		t.Fatalf("ListTokens: %v", err)
+	}
+	if len(all) != 1 {
+		t.Errorf("ListTokens = %d rows, want 1 (identical re-mint must not duplicate)", len(all))
+	}
+	// The same jti with a different token blob is a collision, rejected.
+	if err := l.PutToken(TokenRecord{JTI: "jti-x", Subject: "acme/team", Level: KindAccount, Token: "different", MintedAt: time.Now().UTC()}); err == nil {
+		t.Error("PutToken with a colliding jti and different content succeeded; want rejection")
+	}
+}
+
 func TestAllowlistOps(t *testing.T) {
 	dir := t.TempDir()
 	l := mustInit(t, dir, "acme", []byte("pw"), Config{})

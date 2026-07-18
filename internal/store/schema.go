@@ -72,8 +72,10 @@ func (entityRow) TableName() string { return "entities" }
 // its row with the revocation stamped.
 type tokenRow struct {
 	ID int64
-	// JTI is the token id, the allowlist key.
-	JTI string `orm:"jti,notnull,index"`
+	// JTI is the token id, and it is unique: a jti is a SHA-256 content hash,
+	// so one jti maps to exactly one issuance record (PutToken upserts on a
+	// re-mint of identical content rather than duplicating the row).
+	JTI string `orm:"jti,notnull,unique"`
 	// Subject is the entity path the token was minted for.
 	Subject string `orm:"subject,notnull,index"`
 	// Level is the token level: account or user (message tokens are not stored

@@ -40,6 +40,12 @@ changes may land in minor releases and are flagged **Breaking** below.
   store, show one, rotate (advance the epoch and re-mint the operator token,
   keeping the key), remove (cascade with a shown blast radius; `--yes` skips
   the prompt), and read the subtree audit journal. `--json` on the read verbs.
+- `account add | list | show | remove | audit`: add an account under an
+  operator (a fresh account key and an operator-signed account token at the
+  operator's current epoch), list an operator's accounts, show one, remove
+  (cascade with a shown blast radius), and read the subtree audit journal.
+  `--json` on the read verbs. Depositing an account's jti in the allowlist is
+  left to the allowlist command, keeping account add fail-closed.
 
 ### Notes
 

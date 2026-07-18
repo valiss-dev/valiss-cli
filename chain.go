@@ -309,8 +309,23 @@ func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, e
 		if trec.Retired {
 			return store.TokenRecord{}, fmt.Errorf("valiss: template %q is retired and takes no new mints", ref.name)
 		}
-		if err := grants.addTemplateGrants(parseList(trec.HTTP), parseList(trec.GRPC), parseList(trec.Custom)); err != nil {
-			return store.TokenRecord{}, err
+		// A template carries the raw grant-flag values it was created with;
+		// re-parse them through the same builder methods a direct mint uses, so a
+		// template expresses the same grant shapes and unions with the mint flags.
+		for _, v := range parseList(trec.HTTP) {
+			if err := grants.addHTTPFlag(v); err != nil {
+				return store.TokenRecord{}, err
+			}
+		}
+		for _, v := range parseList(trec.GRPC) {
+			if err := grants.addGRPCFlag(v); err != nil {
+				return store.TokenRecord{}, err
+			}
+		}
+		for _, v := range parseList(trec.Ext) {
+			if err := grants.addExtFlag(v); err != nil {
+				return store.TokenRecord{}, err
+			}
 		}
 		if trec.Bearer {
 			bearer = true
@@ -338,6 +353,17 @@ func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, e
 		}
 	}
 
+	// Fail closed on blank grants. When the mint qualified only through grant
+	// flags (no template, no explicit --no-extension), an empty resolved set
+	// means every --http/--grpc/--ext value was blank ("", " ", ",,"): the
+	// fail-closed gate counts flag presence, so this is the only place a
+	// grant-only mint can still collapse to zero extensions. Refuse it rather
+	// than mint the extension-less token the operator did not opt into.
+	built := grants.build()
+	if p.template == "" && !p.noExtension && len(built) == 0 {
+		return store.TokenRecord{}, errors.New("valiss: --http/--grpc/--ext produced no grant (all values were empty or blank)")
+	}
+
 	opts := []valiss.IssueOption{valiss.WithName(user.Name), valiss.WithEpoch(op.Epoch)}
 	if bearer {
 		opts = append(opts, valiss.WithBearer())
@@ -345,7 +371,7 @@ func mintToken(st *store.Local, path string, p mintParams) (store.TokenRecord, e
 	if ttlSet && ttl > 0 {
 		opts = append(opts, valiss.WithTTL(ttl))
 	}
-	opts = append(opts, grants.build()...)
+	opts = append(opts, built...)
 
 	acctKP, err := nkeys.FromSeed(acct.Seed)
 	if err != nil {

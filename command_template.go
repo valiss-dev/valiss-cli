@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -28,14 +29,22 @@ func newTemplateCommand() *cobra.Command {
 		Short: "Add a template generation",
 		Long: "Add a template. Re-adding under an existing name with new " +
 			"content creates the next generation of that name; re-adding " +
-			"identical content is a no-op.",
+			"identical content is a no-op. The grant flags mirror token mint " +
+			"(--http/--grpc/--ext), so a template expresses the same grant shapes " +
+			"a direct mint can; a stamped template's grants union with a mint's " +
+			"own grant flags.",
+		Example: "  # Generation 1\n" +
+			"  valiss template add acme/web --http \"hosts=api.example.com;methods=GET,POST\" --ttl 24h\n\n" +
+			"  # A new grant under the same name creates generation 2\n" +
+			"  valiss template add acme/web --http \"hosts=api.example.com;methods=GET,POST,DELETE\" --ttl 24h",
 		Args: pathArgs(depthTemplate, depthTemplate, 0),
 		RunE: runTemplateAdd,
 	}
-	add.Flags().StringSlice("http", nil, "grant an HTTP extension for the given domain (repeatable)")
-	add.Flags().StringSlice("grpc", nil, "grant a gRPC extension for the given domain (repeatable)")
-	add.Flags().StringSlice("custom", nil, "grant a custom-scheme extension for the given domain (repeatable)")
-	add.Flags().Duration("ttl", 0, "token time-to-live carried by the template")
+	add.Flags().StringArray("http", nil, "grant an HTTP extension (repeatable); a bare value is a host, or "+
+		"\"hosts=a,b;methods=GET;paths=/v1/*\" to name dimensions")
+	add.Flags().StringArray("grpc", nil, "grant a gRPC extension for the given full method(s) (repeatable, comma-separated)")
+	add.Flags().StringArray("ext", nil, "grant a custom extension as <name>=<json> or <name>=@<file> (repeatable)")
+	add.Flags().Duration("ttl", 0, "token time-to-live carried by the template (0 = no expiry)")
 	add.Flags().Bool("bearer", false, "mark issued tokens as bearer tokens")
 	add.Flags().String("description", "", "human-readable description of the template")
 
@@ -50,9 +59,13 @@ func newTemplateCommand() *cobra.Command {
 	show := &cobra.Command{
 		Use:   "show <operator>/<name>[@<gen>]",
 		Short: "Show a template",
-		Long:  "Show a template. Without a generation pin the latest generation is shown.",
-		Args:  pathArgs(depthTemplate, depthTemplate, 0),
-		RunE:  runTemplateShow,
+		Long:  "Show a template. Without a generation pin the latest generation is shown; a trailing @<gen> pins an exact generation.",
+		Example: "  # The latest generation\n" +
+			"  valiss template show acme/web\n\n" +
+			"  # Pin an exact generation\n" +
+			"  valiss template show acme/web@1",
+		Args: pathArgs(depthTemplate, depthTemplate, 0),
+		RunE: runTemplateShow,
 	}
 	addJSONFlag(show)
 
@@ -220,16 +233,33 @@ func runTemplateAudit(cmd *cobra.Command, args []string) error {
 	for i, g := range gens {
 		summaries[i] = summarizeTemplate(g)
 	}
+	// The referencing mints: the issuances that stamped this template. ADR 0021
+	// wants the audit to show both the generation history and the mints that
+	// reference it, joined by template name/generation.
+	mints, err := st.TokensForTemplate(name)
+	if err != nil {
+		return err
+	}
+	refs := make([]templateMintRef, len(mints))
+	for i, m := range mints {
+		refs[i] = templateMintRef{
+			JTI:        m.JTI,
+			Generation: m.TemplateGen,
+			Subject:    m.Subject,
+			Status:     tokenStatus(m),
+		}
+		if !m.MintedAt.IsZero() {
+			refs[i].Minted = m.MintedAt.UTC().Format(time.RFC3339)
+		}
+	}
 	jsonOut, err := cmd.Flags().GetBool("json")
 	if err != nil {
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), summaries)
+		return printJSON(cmd.OutOrStdout(), templateAuditJSON{Generations: summaries, Mints: refs})
 	}
 	w := cmd.OutOrStdout()
-	// The mints that reference each generation are shown once the token verb
-	// family records issuances; for now the audit is the generation history.
 	for _, s := range summaries {
 		retired := ""
 		if s.Retired {
@@ -237,26 +267,54 @@ func runTemplateAudit(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Fprintf(w, "gen %-3d %s  hash=%s%s\n", s.Generation, dashIfEmpty(s.Created), shortHash(s.ContentHash), retired)
 	}
+	if len(refs) == 0 {
+		fmt.Fprintln(w, "mints: none")
+		return nil
+	}
+	fmt.Fprintln(w, "mints:")
+	for _, r := range refs {
+		fmt.Fprintf(w, "  %s  gen %-3d %-7s %s\n", r.JTI, r.Generation, r.Status, r.Subject)
+	}
 	return nil
+}
+
+// templateMintRef is one issuance that stamped a template, for the audit's
+// referencing-mints view.
+type templateMintRef struct {
+	JTI        string `json:"jti"`
+	Generation uint64 `json:"generation"`
+	Subject    string `json:"subject"`
+	Status     string `json:"status"`
+	Minted     string `json:"minted,omitempty"`
+}
+
+// templateAuditJSON is the machine-readable template audit: the generation
+// history and the mints that reference the template.
+type templateAuditJSON struct {
+	Generations []templateSummary `json:"generations"`
+	Mints       []templateMintRef `json:"mints"`
 }
 
 // templateContentFromFlags reads the claimset flags into a templateContent.
 func templateContentFromFlags(cmd *cobra.Command) (templateContent, error) {
-	http, err := cmd.Flags().GetStringSlice("http")
+	http, err := cmd.Flags().GetStringArray("http")
 	if err != nil {
 		return templateContent{}, err
 	}
-	grpc, err := cmd.Flags().GetStringSlice("grpc")
+	grpc, err := cmd.Flags().GetStringArray("grpc")
 	if err != nil {
 		return templateContent{}, err
 	}
-	custom, err := cmd.Flags().GetStringSlice("custom")
+	ext, err := cmd.Flags().GetStringArray("ext")
 	if err != nil {
 		return templateContent{}, err
 	}
 	ttl, err := cmd.Flags().GetDuration("ttl")
 	if err != nil {
 		return templateContent{}, err
+	}
+	if ttl < 0 {
+		return templateContent{}, fmt.Errorf("valiss: --ttl must not be negative (got %s); use 0 for no expiry", ttl)
 	}
 	bearer, err := cmd.Flags().GetBool("bearer")
 	if err != nil {
@@ -266,7 +324,7 @@ func templateContentFromFlags(cmd *cobra.Command) (templateContent, error) {
 	if err != nil {
 		return templateContent{}, err
 	}
-	return templateContent{HTTP: http, GRPC: grpc, Custom: custom, TTL: ttl, Bearer: bearer, Description: description}, nil
+	return templateContent{HTTP: http, GRPC: grpc, Ext: ext, TTL: ttl, Bearer: bearer, Description: description}, nil
 }
 
 // writeTemplate renders one template generation as text.
@@ -280,8 +338,8 @@ func writeTemplate(cmd *cobra.Command, s templateSummary) error {
 	if len(s.GRPC) > 0 {
 		fmt.Fprintf(w, "%-14s %s\n", "grpc:", strings.Join(s.GRPC, ", "))
 	}
-	if len(s.Custom) > 0 {
-		fmt.Fprintf(w, "%-14s %s\n", "custom:", strings.Join(s.Custom, ", "))
+	if len(s.Ext) > 0 {
+		fmt.Fprintf(w, "%-14s %s\n", "ext:", strings.Join(s.Ext, ", "))
 	}
 	if s.TTL != "" {
 		fmt.Fprintf(w, "%-14s %s\n", "ttl:", s.TTL)

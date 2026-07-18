@@ -97,6 +97,26 @@ func (l *Local) ListTokens(pathPrefix string) ([]TokenRecord, error) {
 	return out, nil
 }
 
+// TokensForTemplate returns the issuance records that stamped a given template
+// name, newest mint first. It is the join behind the template audit's
+// referencing-mints view (ADR 0021): a mint records the template name and
+// generation it stamped, so an audit can show which tokens each generation
+// produced.
+func (l *Local) TokensForTemplate(name string) ([]TokenRecord, error) {
+	rows, err := orm.NewRepo[tokenRow](l.db).
+		Where("template_name = ?", name).
+		OrderBy("minted_at DESC, jti ASC").
+		Find(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("valiss: listing tokens for template %q: %w", name, err)
+	}
+	out := make([]TokenRecord, len(rows))
+	for i, r := range rows {
+		out[i] = tokenRecordOf(r)
+	}
+	return out, nil
+}
+
 // RevokeToken marks a single token revoked. It does not touch the allowlist;
 // the caller removes the jti, since revocation is a jti leaving the allowlist
 // (ADR 0021).

@@ -110,11 +110,13 @@ type templateRow struct {
 	// Name is the template name; Generation is its lifecycle counter.
 	Name       string `orm:"name,notnull,index"`
 	Generation uint64 `orm:"generation,notnull"`
-	// HTTP, GRPC, and Custom are the extension grant domains, JSON-encoded
-	// string lists.
-	HTTP   string `orm:"http"`
-	GRPC   string `orm:"grpc"`
-	Custom string `orm:"custom"`
+	// HTTP, GRPC, and Ext are the raw extension-grant flag values a template
+	// carries, JSON-encoded string lists. They are the exact --http/--grpc/--ext
+	// argument strings, re-parsed by the same grant builder token mint uses, so a
+	// template expresses the same grant shapes a direct mint can.
+	HTTP string `orm:"http"`
+	GRPC string `orm:"grpc"`
+	Ext  string `orm:"ext"`
 	// TTLSeconds is the template's token TTL (0 = none); Bearer marks issued
 	// tokens as bearer; Description is free text.
 	TTLSeconds  int64  `orm:"ttl_seconds"`

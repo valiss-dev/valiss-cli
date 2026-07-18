@@ -21,7 +21,7 @@ import (
 type templateContent struct {
 	HTTP        []string      `json:"http,omitempty"`
 	GRPC        []string      `json:"grpc,omitempty"`
-	Custom      []string      `json:"custom,omitempty"`
+	Ext         []string      `json:"ext,omitempty"`
 	TTL         time.Duration `json:"ttl,omitempty"`
 	Bearer      bool          `json:"bearer,omitempty"`
 	Description string        `json:"description,omitempty"`
@@ -35,7 +35,7 @@ func (c templateContent) canonicalHash() string {
 	cp := c
 	cp.HTTP = sortedCopy(c.HTTP)
 	cp.GRPC = sortedCopy(c.GRPC)
-	cp.Custom = sortedCopy(c.Custom)
+	cp.Ext = sortedCopy(c.Ext)
 	// The description is claim material a template carries, but it is not an
 	// authorization grant; it is included in the hash so a description-only
 	// edit is still a new generation, keeping the audit honest.
@@ -50,7 +50,7 @@ type templateSummary struct {
 	Generation  uint64   `json:"generation"`
 	HTTP        []string `json:"http,omitempty"`
 	GRPC        []string `json:"grpc,omitempty"`
-	Custom      []string `json:"custom,omitempty"`
+	Ext         []string `json:"ext,omitempty"`
 	TTL         string   `json:"ttl,omitempty"`
 	Bearer      bool     `json:"bearer,omitempty"`
 	Description string   `json:"description,omitempty"`
@@ -66,7 +66,7 @@ func summarizeTemplate(r store.TemplateRecord) templateSummary {
 		Generation:  r.Generation,
 		HTTP:        parseList(r.HTTP),
 		GRPC:        parseList(r.GRPC),
-		Custom:      parseList(r.Custom),
+		Ext:         parseList(r.Ext),
 		Bearer:      r.Bearer,
 		Description: r.Description,
 		ContentHash: r.ContentHash,
@@ -110,7 +110,7 @@ func addTemplate(st *store.Local, name string, content templateContent) (rec sto
 		Generation:  generation,
 		HTTP:        marshalList(content.HTTP),
 		GRPC:        marshalList(content.GRPC),
-		Custom:      marshalList(content.Custom),
+		Ext:         marshalList(content.Ext),
 		TTLSeconds:  int64(content.TTL / time.Second),
 		Bearer:      content.Bearer,
 		Description: content.Description,

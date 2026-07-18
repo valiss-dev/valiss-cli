@@ -11,14 +11,14 @@ import (
 
 // TemplateRecord is one generation of a claim template. It carries claim
 // material only (extension grants, TTL, the bearer flag, a description), never
-// identity claims. HTTP, GRPC, and Custom are JSON-encoded string lists; the
-// chain layer marshals and unmarshals them.
+// identity claims. HTTP, GRPC, and Ext are JSON-encoded string lists of the raw
+// grant-flag values; the chain layer marshals and unmarshals them.
 type TemplateRecord struct {
 	Name        string
 	Generation  uint64
 	HTTP        string
 	GRPC        string
-	Custom      string
+	Ext         string
 	TTLSeconds  int64
 	Bearer      bool
 	Description string
@@ -36,7 +36,7 @@ func (l *Local) PutTemplate(r TemplateRecord) error {
 		Generation:  r.Generation,
 		HTTP:        r.HTTP,
 		GRPC:        r.GRPC,
-		Custom:      r.Custom,
+		Ext:         r.Ext,
 		TTLSeconds:  r.TTLSeconds,
 		Bearer:      r.Bearer,
 		Description: r.Description,
@@ -142,7 +142,7 @@ func templateRecordOf(row templateRow) TemplateRecord {
 		Generation:  row.Generation,
 		HTTP:        row.HTTP,
 		GRPC:        row.GRPC,
-		Custom:      row.Custom,
+		Ext:         row.Ext,
 		TTLSeconds:  row.TTLSeconds,
 		Bearer:      row.Bearer,
 		Description: row.Description,

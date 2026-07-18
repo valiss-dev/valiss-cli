@@ -51,9 +51,8 @@ type grpcExt struct {
 func (grpcExt) ExtensionName() string { return "grpc" }
 
 // rawExtension is a named extension whose body is opaque JSON supplied
-// verbatim: the --ext flag, and the domain lists a template's custom grants
-// carry. MarshalJSON returns the payload byte for byte, so the wire claim is
-// exactly what was provided.
+// verbatim through the --ext flag (mint or template). MarshalJSON returns the
+// payload byte for byte, so the wire claim is exactly what was provided.
 type rawExtension struct {
 	name    string
 	payload json.RawMessage
@@ -65,8 +64,8 @@ func (e rawExtension) MarshalJSON() ([]byte, error) { return e.payload, nil }
 // grantBuilder accumulates the grants a mint stamps, from the template first
 // and then the explicit flags, deduplicating within each dimension so a grant
 // named twice is stamped once. Built-in http/grpc dimensions union; named
-// extensions (--ext and template custom) are keyed by name and a name set more
-// than once is an error.
+// extensions (--ext, from mint or a stamped template) are keyed by name and a
+// name set more than once is an error.
 type grantBuilder struct {
 	httpHosts   stringSet
 	httpMethods stringSet
@@ -87,28 +86,6 @@ func (b *grantBuilder) addRaw(name string, payload json.RawMessage) error {
 	}
 	b.raw[name] = payload
 	b.rawOrder = append(b.rawOrder, name)
-	return nil
-}
-
-// addTemplateGrants seeds the builder from a stamped template's grants: its
-// http domains are HTTP hosts, its grpc domains are gRPC methods, and its
-// custom domains are stamped as a "custom" extension carrying a domain list.
-func (b *grantBuilder) addTemplateGrants(httpDomains, grpcDomains, customDomains []string) error {
-	b.httpHosts.addAll(httpDomains)
-	b.grpcMethods.addAll(grpcDomains)
-	if len(customDomains) > 0 {
-		var set stringSet
-		set.addAll(customDomains)
-		body, err := json.Marshal(struct {
-			Domains []string `json:"domains"`
-		}{Domains: set.sorted()})
-		if err != nil {
-			return fmt.Errorf("valiss: encoding template custom grant: %w", err)
-		}
-		if err := b.addRaw("custom", body); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

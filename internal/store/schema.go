@@ -67,9 +67,12 @@ type entityRow struct {
 
 func (entityRow) TableName() string { return "entities" }
 
-// tokenRow is one issuance: a minted token identified by its jti. Tokens are
-// revoked (jti leaves the allowlist), never removed, so a revoked token keeps
-// its row with the revocation stamped.
+// tokenRow is one issuance: a minted token identified by its jti. Every
+// issuance is one generation of its entity's token (a mint re-issues the
+// entity at the next generation), so the rows for a subject are that entity's
+// token generation history, newest generation current. Tokens are revoked
+// (jti leaves the allowlist), never removed, so a revoked token keeps its row
+// with the revocation stamped.
 type tokenRow struct {
 	ID int64
 	// JTI is the token id, and it is unique: a jti is a SHA-256 content hash,
@@ -83,6 +86,11 @@ type tokenRow struct {
 	Level string `orm:"level,notnull"`
 	// Token is the JWT.
 	Token string `orm:"token,notnull"`
+	// Generation is the entity generation this issuance is: a mint re-issues
+	// the entity's token as its next generation, so each issuance row is one
+	// generation of the entity's token and the highest generation for a
+	// subject is its current token (the one creds export serves).
+	Generation uint64 `orm:"generation"`
 	// TemplateName, TemplateGen, and TemplateHash stamp the template a mint
 	// used, so an audit reads correctly even after the template evolves
 	// (ADR 0021). Empty when no template was used.

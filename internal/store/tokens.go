@@ -20,6 +20,7 @@ type TokenRecord struct {
 	Subject      string
 	Level        string
 	Token        string
+	Generation   uint64
 	TemplateName string
 	TemplateGen  uint64
 	TemplateHash string
@@ -51,6 +52,7 @@ func (l *Local) PutToken(r TokenRecord) error {
 		Subject:      r.Subject,
 		Level:        r.Level,
 		Token:        r.Token,
+		Generation:   r.Generation,
 		TemplateName: r.TemplateName,
 		TemplateGen:  r.TemplateGen,
 		TemplateHash: r.TemplateHash,
@@ -135,6 +137,7 @@ func tokenRecordOf(row tokenRow) TokenRecord {
 		Subject:      row.Subject,
 		Level:        row.Level,
 		Token:        row.Token,
+		Generation:   row.Generation,
 		TemplateName: row.TemplateName,
 		TemplateGen:  row.TemplateGen,
 		TemplateHash: row.TemplateHash,

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -291,19 +290,5 @@ func TestStoreConfig(t *testing.T) {
 			// test covers. End-to-end config behavior is exercised by the
 			// store package's own tests.
 		})
-	}
-}
-
-// TestStubsReturnNotImplemented spot-checks that leaf bodies are stubs.
-func TestStubsReturnNotImplemented(t *testing.T) {
-	// Every verb but creds export is implemented; it remains a stub until its
-	// store-backed body lands.
-	for _, path := range [][]string{
-		{"creds", "export"},
-	} {
-		cmd := findCommand(t, path...)
-		if err := cmd.RunE(cmd, nil); !errors.Is(err, errNotImplemented) {
-			t.Errorf("%v RunE = %v, want errNotImplemented", path, err)
-		}
 	}
 }
